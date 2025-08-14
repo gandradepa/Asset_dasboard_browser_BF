@@ -19,7 +19,6 @@
         .type-EL { background: #fff3cd; color: #664d03; }
         .type-PL { background: #fde2e2; color: #842029; }
         .type-HV { background: #e8e6ff; color: #3d2b8c; }
-        .type-BF { background: #e1f5fe; color: #01579b; }
         .type-OTHER { background: #f1f3f5; color: #333; }
 
         .filters-bar .form-select { min-width: 220px; }
@@ -76,23 +75,22 @@
     <table id="assetTable" class="table table-striped table-bordered align-middle text-center w-100">
         <thead class="table-dark">
             <tr>
-                <th class="text-center">QR Code</th>
-                <th class="text-center">Building</th>
-                <th class="text-center">Type</th>
-                <th class="text-start">Manufacturer</th>
-                <th class="text-start">Model</th>
-                <th class="text-start">Serial</th>
-                <th class="text-center">Diameter</th>
-                <th class="text-start">Asset Plate/Label (Optional)</th>
-                <th class="text-start">Asset Group</th>
-                <th class="text-start">Attribute</th>
-                <th class="text-start">Application</th> <!-- ✅ NEW -->
-                <th class="text-start">Description</th>
-                <th class="text-center">Approved</th>
-                <th class="text-center">Flagged</th>
-                <th class="text-center">Modified</th>
-                <th class="text-center">Missed Photo</th>
-                <th class="text-center">Action</th>
+                <th class="text-center">QR Code</th>           <!-- 0 -->
+                <th class="text-center">Building</th>           <!-- 1 -->
+                <th class="text-center">Type</th>               <!-- 2 -->
+                <th class="text-start">Manufacturer</th>        <!-- 3 -->
+                <th class="text-start">Model</th>               <!-- 4 -->
+                <th class="text-start">Serial</th>              <!-- 5 -->
+                <th class="text-start">Asset Plate/Label</th>   <!-- 6 (UBC Tag) -->
+                <th class="text-start">Asset Group</th>         <!-- 7 -->
+                <th class="text-start">Attribute</th>           <!-- 8 -->
+                <th class="text-start">Description</th>         <!-- 9 -->
+                <th class="text-start">Diameter</th>            <!-- 10 -->
+                <th class="text-center">Approved</th>           <!-- 11 -->
+                <th class="text-center">Flagged</th>            <!-- 12 -->
+                <th class="text-center">Modified</th>           <!-- 13 -->
+                <th class="text-center">Missed Photo</th>       <!-- 14 -->
+                <th class="text-center">Action</th>             <!-- 15 -->
             </tr>
         </thead>
         <tbody>
@@ -109,13 +107,13 @@
                 <td class="text-start">{{ item.Manufacturer }}</td>
                 <td class="text-start">{{ item.Model }}</td>
                 <td class="text-start">{{ item['Serial Number'] }}</td>
-                <td>{{ item.Diameter }}</td>
                 <td class="text-start">{{ item['UBC Tag'] }}</td>
                 <td class="text-start">{{ item['Asset Group'] }}</td>
                 <td class="text-start">{{ item['Attribute'] }}</td>
-                <td class="text-start">{{ item['Application'] }}</td> <!-- ✅ -->
                 <td class="text-start">{{ item['Description'] }}</td>
+                <td class="text-start">{{ item['Diameter'] }}</td>
 
+                <!-- Approved cell: display icon, carry searchable value in data-search -->
                 {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
                 <td class="approved-cell"
                     data-docid="{{ item.doc_id }}"
@@ -137,7 +135,7 @@
                     <span class="text-success"
                           data-bs-toggle="tooltip"
                           data-bs-placement="top"
-                          title="All required present">
+                          title="At least 2 of 3 present">
                       ✅ {{ item['Photos Summary'] }}
                     </span>
                   {% endif %}
@@ -161,36 +159,47 @@
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
 
     <script>
+      // Remember dashboard query string for sticky quick-filters across Review
       try { localStorage.setItem('dashboardQuery', window.location.search || ''); } catch (e) {}
 
+      // Tooltips
       document.addEventListener('DOMContentLoaded', function () {
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
         tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
       });
 
       $(document).ready(function () {
-          // Column indexes (0-based) including Application
+          // Column indexes (0-based) after removing Application/Year/TSBC:
+          // 0 QR, 1 Building, 2 Type, 3 Manufacturer, 4 Model, 5 Serial,
+          // 6 UBC Tag, 7 Asset Group, 8 Attribute, 9 Description, 10 Diameter,
+          // 11 Approved, 12 Flagged, 13 Modified, 14 Missed, 15 Action
           var colQR = 0, colBuilding = 1, colType = 2, colModel = 4,
-              colDiameter = 6, colAssetGroup = 8, colAttribute = 9, colApplication = 10,
-              colDescription = 11, colApproved = 12;
+              colAssetGroup = 7, colAttribute = 8, colDescription = 9, colDiameter = 10,
+              colApproved = 11;
 
+          // DataTable with stateSave
           var table = $('#assetTable').DataTable({
               pageLength: 15,
               order: [],
               stateSave: true,
               stateDuration: -1,
               columnDefs: [
-                  // Orderable columns
-                  { orderable: true, targets: [colQR, colBuilding, colType, colModel, colDiameter, colAssetGroup, colAttribute, colApplication, colDescription] },
+                  // Orderable: QR, Building, Type, Model, Asset Group, Attribute, Description, Diameter
+                  { orderable: true, targets: [colQR, colBuilding, colType, colModel, colAssetGroup, colAttribute, colDescription, colDiameter] },
+                  // Make "Approved" not orderable (toggle cell)
                   { orderable: false, targets: [colApproved] }
               ],
+              // Use 'data-search' attribute for filtering the Approved column
               createdRow: function (row, data, dataIndex) {
                   var $approvedCell = $('td', row).eq(colApproved);
                   var val = $approvedCell.attr('data-search');
-                  if (val) $approvedCell.attr('data-search', val);
+                  if (val) {
+                      $approvedCell.attr('data-search', val);
+                  }
               }
           });
 
+          // Type badge coloring
           function applyTypeBadges() {
               $('#assetTable span.type-badge').each(function () {
                   var t = ($(this).data('type') || '').toString().trim().toUpperCase();
@@ -203,7 +212,6 @@
                   else if (t === 'EL') cls = 'type-EL';
                   else if (t === 'PL') cls = 'type-PL';
                   else if (t === 'HV') cls = 'type-HV';
-                  else if (t === 'BF') cls = 'type-BF';
                   $(this).addClass(cls);
               });
           }
@@ -225,9 +233,10 @@
           }
           populateBuilding();
 
-          // Restore saved state
+          // Restore saved DataTables state to selects
           var state = table.state.loaded();
           if (state && state.columns) {
+              // Building select (strip ^$ anchors)
               var bSearch = state.columns[colBuilding]?.search?.search || '';
               if (bSearch.startsWith('^') && bSearch.endsWith('$')) {
                   bSearch = bSearch.slice(1, -1);
@@ -235,6 +244,7 @@
               }
               if (bSearch) $('#filter-building').val(bSearch);
 
+              // Approved select
               var aSearch = state.columns[colApproved]?.search?.search || '';
               if (aSearch === '^True$') $('#filter-approved').val('True');
               else if (aSearch === '^False$') $('#filter-approved').val('False');
@@ -263,7 +273,7 @@
               }
           });
 
-          // Make the Approved column filter use td[data-search]
+          // Ensure column search uses data-search attribute for the Approved column
           $.fn.dataTable.ext.order['dom-data-search'] = function (settings, col) {
               return this.api().column(col, { order: 'index' }).nodes().map(function (td) {
                   return $(td).attr('data-search') || '';
@@ -271,8 +281,8 @@
           };
           $.fn.dataTable.ext.search.push(function (settings, data, dataIndex, rowData, counter) {
               var col = colApproved;
-              var search = settings.aoPreSearchCols[col].sSearch;
-              if (!search) return true;
+              var search = settings.aoPreSearchCols[col].sSearch; // regex if regex=true
+              if (!search) return true; // no filter
               var td = settings.aoData[dataIndex].anCells[col];
               var val = $(td).attr('data-search') || '';
               var regex = settings.aoPreSearchCols[col].bRegex ? new RegExp(search) : null;

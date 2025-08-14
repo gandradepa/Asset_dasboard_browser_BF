@@ -95,7 +95,6 @@
                 </select>
             </div>
 
-            <!-- ✅ NEW: Application dropdown from DB -->
             <div>
                 <label class="form-label">Application</label>
                 <select class="form-select" name="Application">
@@ -106,9 +105,13 @@
                 </select>
             </div>
 
+            <!-- Editable Description with Auto-fill button -->
             <div>
-                <label class="form-label">Description</label>
-                <input type="text" class="form-control" value="{{ data.get('Description','') }}" readonly>
+                <label class="form-label d-flex align-items-center gap-2">
+                    Description
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="autoFillDesc" title="Recompute from Application and Asset Group">↺ Auto‑fill</button>
+                </label>
+                <input id="descField" name="Description" type="text" class="form-control" value="{{ data.get('Description','') }}">
             </div>
 
             {% for key, value in data.items() %}
@@ -140,6 +143,7 @@
 
     <script>
         (function() {
+            // ===== Image viewer controls =====
             const mainImg = document.getElementById('mainImage');
             let scale = 1.0, rotation = 0;
 
@@ -163,7 +167,7 @@
                 });
             });
 
-            // Preserve dashboard quick-filters (query string)
+            // ===== Preserve dashboard quick-filters (query string) =====
             try {
                 const savedQuery = localStorage.getItem('dashboardQuery') || '';
                 const backTop = document.getElementById('backLink');
@@ -175,6 +179,69 @@
                 const hidden = document.getElementById('dashboard_query');
                 if (hidden) hidden.value = savedQuery || '';
             } catch (e) {}
+
+            // ===== Live Description recompute with manual override support =====
+            let descEdited = false; // becomes true when user types
+
+            function computeDescription(appVal, assetGroupVal) {
+                // Build: BFP-<Application + space><First word of Asset Group + space>BFP
+                var prefix = "BFP-";
+                var suffix = "BFP";
+
+                var app = (appVal || "").trim();
+                var appPart = app ? (app + " ") : "";
+
+                var firstWord = "";
+                if (assetGroupVal && assetGroupVal.trim()) {
+                    firstWord = assetGroupVal.trim().split(/\s+/)[0] + " ";
+                }
+
+                return (prefix + appPart + firstWord + suffix).trim();
+            }
+
+            function updateDescription(force=false) {
+                var descField = document.getElementById("descField");
+                if (!descField) return;
+
+                if (descEdited && !force) return; // don't override manual edits
+
+                var appEl = document.querySelector('select[name="Application"]');
+                var agEl  = document.querySelector('select[name="Asset Group"]');
+
+                var appVal = appEl ? appEl.value : "";
+                var agVal  = agEl ? agEl.value  : "";
+
+                descField.value = computeDescription(appVal, agVal);
+            }
+
+            document.addEventListener("DOMContentLoaded", function () {
+                var descField = document.getElementById("descField");
+                var appEl = document.querySelector('select[name="Application"]');
+                var agEl  = document.querySelector('select[name="Asset Group"]');
+                var autoBtn = document.getElementById("autoFillDesc");
+
+                // If there is an existing (non-empty) description, treat it as a manual value.
+                if (descField && descField.value.trim()) {
+                    descEdited = true;
+                } else {
+                    updateDescription(true); // initial auto-fill if blank
+                }
+
+                if (descField) {
+                    descField.addEventListener("input", function() {
+                        descEdited = true;
+                    });
+                }
+                if (appEl) appEl.addEventListener("change", function(){ updateDescription(false); });
+                if (agEl)  agEl.addEventListener("change", function(){ updateDescription(false); });
+
+                if (autoBtn) {
+                    autoBtn.addEventListener("click", function() {
+                        descEdited = false;
+                        updateDescription(true);
+                    });
+                }
+            });
         })();
     </script>
 </body>

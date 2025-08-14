@@ -172,12 +172,30 @@ def get_application_options():
         return []
 
 
-def _compute_description(asset_group: str, ubc_tag: str) -> str:
-    ag = (asset_group or "").strip()
-    ubc = (ubc_tag or "").strip()
-    if ag and ubc:
-        return f"{ag} - {ubc}"
-    return ag or ubc
+# ===== Description logic =====
+def _compute_description(asset_group: str, ubc_tag: str, application: str = "") -> str:
+    """
+    Build Description as:
+      BFP-<Application + space><First word of Asset Group + space>BFP
+
+    Example:
+      Application='DCW', Asset Group='Secondary Backflow Devices'
+      -> 'BFP-DCW Secondary BFP'
+
+    Note: ubc_tag kept in signature for compatibility; not used in this format.
+    """
+    prefix = "BFP-"
+    suffix = "BFP"
+
+    app_part = (application or "").strip()
+    if app_part:
+        app_part += " "
+
+    first_word_group = ""
+    if asset_group:
+        first_word_group = asset_group.strip().split()[0] + " "
+
+    return f"{prefix}{app_part}{first_word_group}{suffix}".strip()
 
 
 def load_json_items():
@@ -219,11 +237,14 @@ def load_json_items():
             data.setdefault("Approved", "")                  # default blank (False)
             data.setdefault("Diameter", "")                  # new field
 
-            # Derived: Description = "Asset Group - UBC Tag"
-            data["Description"] = _compute_description(
-                data.get("Asset Group"),
-                data.get("UBC Tag")
-            )
+            # Derived: Description from Application + Asset Group
+            # Only compute if missing/blank to preserve manual overrides
+            if not (data.get("Description") or "").strip():
+                data["Description"] = _compute_description(
+                    data.get("Asset Group"),
+                    data.get("UBC Tag"),
+                    data.get("Application", "")
+                )
 
             # ✅ Missed photo rule: require at least 2 of 3 present
             present = 0
@@ -233,7 +254,6 @@ def load_json_items():
                 if exists_map[tag]:
                     present += 1
 
-            # ✅ FIXED BRACKET on the next line
             missing_tags = [tag for tag in SEQ_CHECK if not exists_map[tag]]
             friendly_map = {
                 '-0': 'Asset Plate/Label',
@@ -323,7 +343,14 @@ def review(doc_id):
     data.setdefault("UBC Tag", "")
     data.setdefault("Approved", "")
     data.setdefault("Diameter", "")
-    data["Description"] = _compute_description(data.get("Asset Group"), data.get("UBC Tag"))
+
+    # Derived Description (compute only if blank to preserve manual values)
+    if not (data.get("Description") or "").strip():
+        data["Description"] = _compute_description(
+            data.get("Asset Group"),
+            data.get("UBC Tag"),
+            data.get("Application", "")
+        )
 
     # Build image map (no -3)
     images = {}
@@ -375,6 +402,7 @@ def save_review(doc_id):
     structured.setdefault("Approved", "")
     structured.setdefault("Flagged", "false")
     structured.setdefault("Diameter", "")
+    structured.setdefault("Description", "")  # ensure key exists
 
     # Update Flagged
     new_flagged = "true" if request.form.get("Flagged") == "on" else "false"
@@ -382,9 +410,9 @@ def save_review(doc_id):
         json_data["modified"] = True
     structured["Flagged"] = new_flagged
 
-    # Update known fields (skip derived Description and Approved)
+    # Update fields from form (now we DO allow Description to be user-edited)
     for field in list(structured.keys()):
-        if field in ("Flagged", "Description", "Approved"):
+        if field in ("Flagged", "Approved"):
             continue
         form_value = request.form.get(field, "")
         if structured.get(field, "") != form_value:
@@ -393,17 +421,23 @@ def save_review(doc_id):
 
     # Capture any brand-new fields (future-proof)
     for field, form_value in request.form.items():
-        if field in ("Flagged", "action", "Description", "dashboard_query"):
+        if field in ("Flagged", "action", "dashboard_query"):
             continue
         if field not in structured:
             structured[field] = form_value
             json_data["modified"] = True
 
-    # Recompute derived Description
-    structured["Description"] = _compute_description(
-        structured.get("Asset Group"),
-        structured.get("UBC Tag")
-    )
+    # If Description came in blank, compute default; otherwise respect user text
+    desc_from_form = (request.form.get("Description", "") or "").strip()
+    if not desc_from_form:
+        auto_desc = _compute_description(
+            structured.get("Asset Group"),
+            structured.get("UBC Tag"),
+            structured.get("Application", "")
+        )
+        if (structured.get("Description") or "").strip() != auto_desc:
+            structured["Description"] = auto_desc
+            json_data["modified"] = True
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(json_data, f, ensure_ascii=False, indent=4)
@@ -434,7 +468,7 @@ def save_review(doc_id):
         return redirect(url_for("review", doc_id=prev_doc))
 
     dash_q = request.form.get("dashboard_query", "")
-    if dash_q.startswith("?"):
+    if (dash_q or "").startswith("?"):
         return redirect(url_for("index") + dash_q)
 
     return redirect(url_for("index"))
