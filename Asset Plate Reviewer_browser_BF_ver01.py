@@ -7,8 +7,8 @@ from flask import Flask, render_template, request, redirect, url_for, send_from_
 
 app = Flask(
     __name__,
-    template_folder=r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\Asset_plate_review_ME\review_asset_templates",
-    static_folder=r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\Asset_plate_review_ME\review_asset_templates\static"
+    template_folder=r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\Asset_plate_review_BF\review_asset_templates",
+    static_folder=r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\Asset_plate_review_BF\review_asset_templates\static"
 )
 
 # --- Paths ---
@@ -18,28 +18,36 @@ IMG_DIR  = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New A
 # --- SQLite DB (for dropdown options) ---
 DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\asset_capture_app\data\QR_codes.db"
 
-# Adjust these if your schema differs:
+# Tables/columns (only used where relevant)
 ASSET_GROUP_TABLE = "Asset_Group"
-ASSET_GROUP_COL   = "name"   # e.g., name / Asset_Group / GroupName
+ASSET_GROUP_COL   = "name"
+ATTRIBUTE_TABLE   = "Attribute"       # not used directly since we lock Attribute to BackflowDevice
 
-ATTRIBUTE_TABLE   = "Attribute"
-ATTRIBUTE_COL     = "Code"   # per your request
+# --- Application table autodetection ---
+APPLICATION_TABLE_CANDIDATES = [
+    "bf_applicaton_type",   # as originally provided
+    "bf_application_type",  # fixed spelling
+    "BF_Application_Type"   # possible title-case
+]
+TEXT_TYPE_HINTS = {"TEXT", "VARCHAR", "NVARCHAR", "CHAR", "CLOB"}
 
 VALID_IMAGE_EXTS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG']
 
-# Missed Photo check: any missing among -0, -1, -2 => YES
-SEQ_CHECK = ['-0', '-1', '-2']
-# Review can show -3 if present
-SEQ_SHOW  = ['-0', '-1', '-2', '-3']
+# Required-photo sequences (TSBC -3 excluded everywhere)
+SEQ_CHECK = ['-0', '-1', '-2']  # Asset Plate/Label, Asset Plate/Label (Optional), Main Asset
+SEQ_SHOW  = ['-0', '-1', '-2']
 
-# JSON filename pattern: "<QR>_ME_<Building>.json"
+# JSON filename pattern: "<QR>_<TYPE>_<Building>.json"
 JSON_NAME_RE = re.compile(r"^(\d+)_([A-Za-z]+)_(\d+(?:-\d+)?)\.json$")
 
 
-def find_image(qr: str, building: str, seq_tag: str):
-    """Find image by pattern: '<QR> <Building> ME - <seq>.<ext>'."""
+def find_image(qr: str, building: str, asset_type_mid: str, seq_tag: str):
+    """
+    Find image by pattern: '<QR> <Building> <TYPE> - <seq>.<ext>'.
+    TYPE is 'BF' per current scope/spec.
+    """
     seq = seq_tag.replace('-', '').strip()
-    base = f"{qr} {building} ME - {seq}"
+    base = f"{qr} {building} {asset_type_mid} - {seq}"
     for ext in VALID_IMAGE_EXTS:
         candidate = os.path.join(IMG_DIR, base + ext)
         if os.path.exists(candidate):
@@ -72,11 +80,96 @@ def _fetch_column_values(table: str, col: str):
 
 
 def get_asset_group_options():
-    return _fetch_column_values(ASSET_GROUP_TABLE, ASSET_GROUP_COL)
+    """Restrict Asset Group dropdown to the two Backflow groups."""
+    all_opts = _fetch_column_values(ASSET_GROUP_TABLE, ASSET_GROUP_COL)
+    allowed = {"Primary Backflow Devices", "Secondary Backflow Devices"}
+    return [opt for opt in all_opts if opt in allowed]
 
 
 def get_attribute_options():
-    return _fetch_column_values(ATTRIBUTE_TABLE, ATTRIBUTE_COL)
+    """Restrict Attribute dropdown to BackflowDevice only."""
+    return ["BackflowDevice"]
+
+
+# --- Robust Application loader helpers ---
+def _table_exists(conn, table_name: str) -> bool:
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table_name,))
+    return cur.fetchone() is not None
+
+
+def _text_columns(conn, table_name: str):
+    """
+    Return a list of column names whose declared type looks text-like.
+    Falls back to *all* columns if types aren't declared.
+    """
+    cur = conn.cursor()
+    cur.execute(f'PRAGMA table_info("{table_name}")')
+    cols = cur.fetchall()
+    if not cols:
+        return []
+
+    text_cols, all_cols = [], []
+    for cid, name, coltype, notnull, dflt, pk in cols:
+        all_cols.append(name)
+        t = (coltype or "").upper()
+        if any(hint in t for hint in TEXT_TYPE_HINTS) or t == "":
+            text_cols.append(name)
+    return text_cols or all_cols
+
+
+def _fetch_distinct_nonempty(conn, table: str, col: str):
+    cur = conn.cursor()
+    try:
+        cur.execute(f'SELECT DISTINCT "{col}" FROM "{table}"')
+        vals = []
+        for (v,) in cur.fetchall():
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s:
+                vals.append(s)
+        vals = sorted(set(vals), key=lambda s: (s.lower(), s))
+        return vals
+    except Exception as e:
+        print(f"⚠️ Failed fetching distinct from {table}.{col}: {e}")
+        return []
+
+
+def get_application_options():
+    """
+    Load Application dropdown values:
+      - Try multiple table names.
+      - Introspect columns and use the first text-like column with data.
+    """
+    if not _connectable():
+        print("⚠️ DB not found:", DB_PATH)
+        return []
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            for tbl in APPLICATION_TABLE_CANDIDATES:
+                if not _table_exists(conn, tbl):
+                    continue
+
+                candidate_cols = ["name", "Name", "code", "Code", "application", "Application", "type", "Type"]
+                cols = _text_columns(conn, tbl)
+                ordered_cols = [c for c in candidate_cols if c in cols] + [c for c in cols if c not in candidate_cols]
+
+                for col in ordered_cols:
+                    vals = _fetch_distinct_nonempty(conn, tbl, col)
+                    if vals:
+                        print(f"✔️ Application options from {tbl}.{col}: {len(vals)} values")
+                        return vals
+
+                print(f"ℹ️ Table '{tbl}' found, but no non-empty text-like columns produced values: {cols}")
+
+            print("⚠️ No Application table/values found. Tried:", APPLICATION_TABLE_CANDIDATES)
+            return []
+    except Exception as e:
+        print("❌ Error while loading Application options:", e)
+        return []
 
 
 def _compute_description(asset_group: str, ubc_tag: str) -> str:
@@ -98,6 +191,11 @@ def load_json_items():
             continue
 
         qr, asset_type_mid, building = m.groups()
+
+        # ✅ Only BF assets
+        if asset_type_mid.upper() != "BF":
+            continue
+
         doc_id = filename[:-5]  # strip ".json"
 
         try:
@@ -113,13 +211,13 @@ def load_json_items():
             data.setdefault("Manufacturer", "")
             data.setdefault("Model", "")
             data.setdefault("Serial Number", "")
-            data.setdefault("Year", "")
             data.setdefault("UBC Tag", "")
-            data.setdefault("Technical Safety BC", "")
             data.setdefault("Asset Group", "")
-            data.setdefault("Attribute", "")
+            data.setdefault("Attribute", "BackflowDevice")   # default value
+            data.setdefault("Application", "")               # new field
             data.setdefault("Flagged", "false")
-            data.setdefault("Approved", "")  # NEW: default blank = False
+            data.setdefault("Approved", "")                  # default blank (False)
+            data.setdefault("Diameter", "")                  # new field
 
             # Derived: Description = "Asset Group - UBC Tag"
             data["Description"] = _compute_description(
@@ -127,23 +225,37 @@ def load_json_items():
                 data.get("UBC Tag")
             )
 
-            # Compute missing list (-0, -1, -2)
-            missing_tags = [tag for tag in SEQ_CHECK if not find_image(qr, building, tag)]
-            missing_photo = len(missing_tags) > 0
-            friendly_map = {'-0': 'Asset Plate', '-1': 'UBC Tag', '-2': 'Main Picture'}
+            # ✅ Missed photo rule: require at least 2 of 3 present
+            present = 0
+            exists_map = {}
+            for tag in SEQ_CHECK:
+                exists_map[tag] = bool(find_image(qr, building, "BF", tag))
+                if exists_map[tag]:
+                    present += 1
+
+            # ✅ FIXED BRACKET on the next line
+            missing_tags = [tag for tag in SEQ_CHECK if not exists_map[tag]]
+            friendly_map = {
+                '-0': 'Asset Plate/Label',
+                '-1': 'Asset Plate/Label (Optional)',
+                '-2': 'Main Asset'
+            }
             missing_friendly = ", ".join(friendly_map.get(tag, tag) for tag in missing_tags)
+
+            missed_photo = present < 2  # only flag if < 2 present
+            photos_summary = f"{present}/3"
 
             items.append({
                 "doc_id": doc_id,
                 "qr_code": qr,
                 "building": building,
-                "asset_type": raw.get("asset_type", ""),
+                "asset_type": "BF",
                 "Flagged": data.get("Flagged", "false"),
-                "Approved": data.get("Approved", ""),  # include in dashboard data
+                "Approved": data.get("Approved", ""),
                 "Modified": raw.get("modified", False),
-                "Missed Photo": "YES" if missing_photo else "NO",
+                "Missed Photo": "YES" if missed_photo else "NO",
                 "Missing List": missing_friendly,
-                "Photos Summary": f"{3 - len(missing_tags)}/3",
+                "Photos Summary": photos_summary,
                 **data
             })
         except Exception as e:
@@ -157,7 +269,7 @@ def index():
     modified_filter = request.args.get("modified")
     missed_filter = request.args.get("missed")
 
-    all_data = load_json_items()
+    all_data = load_json_items()  # BF-only
 
     count_flagged = sum(1 for item in all_data if item.get("Flagged") == "true")
     count_modified = sum(1 for item in all_data if item.get("Modified"))
@@ -198,20 +310,25 @@ def review(doc_id):
         return "Bad ID", 400
 
     qr, asset_type_mid, building = m.groups()
+    if asset_type_mid.upper() != "BF":
+        return "Not BF asset", 404
+
     with open(json_path, 'r', encoding='utf-8') as f:
         loaded = json.load(f)
 
     data = loaded.get("structured_data", {}) or {}
     data.setdefault("Asset Group", "")
-    data.setdefault("Attribute", "")
+    data.setdefault("Attribute", "BackflowDevice")  # default value for Attribute
+    data.setdefault("Application", "")              # ensure presence for edit
     data.setdefault("UBC Tag", "")
-    data.setdefault("Approved", "")  # keep approved in data set
+    data.setdefault("Approved", "")
+    data.setdefault("Diameter", "")
     data["Description"] = _compute_description(data.get("Asset Group"), data.get("UBC Tag"))
 
-    # Build image map
+    # Build image map (no -3)
     images = {}
     for tag in SEQ_SHOW:
-        filename = find_image(qr, building, tag)
+        filename = find_image(qr, building, "BF", tag)
         if filename:
             images[tag] = {"exists": True, "url": url_for('serve_image', filename=filename)}
         else:
@@ -220,17 +337,19 @@ def review(doc_id):
     # Dropdown options from DB
     asset_group_options = get_asset_group_options()
     attribute_options   = get_attribute_options()
+    application_options = get_application_options()
 
     return render_template(
         "review.html",
         doc_id=doc_id,
         qr_code=qr,
         building=building,
-        asset_type=loaded.get("asset_type", ""),
+        asset_type="BF",
         data=data,
         images=images,
         asset_group_options=asset_group_options,
-        attribute_options=attribute_options
+        attribute_options=attribute_options,
+        application_options=application_options
     )
 
 
@@ -248,12 +367,14 @@ def save_review(doc_id):
         structured = {}
         json_data["structured_data"] = structured
 
-    # Ensure critical keys exist
+    # Ensure keys exist
     structured.setdefault("Asset Group", "")
-    structured.setdefault("Attribute", "")
+    structured.setdefault("Attribute", "BackflowDevice")
+    structured.setdefault("Application", "")
     structured.setdefault("UBC Tag", "")
-    structured.setdefault("Approved", "")  # ensure exists, but not toggled here
+    structured.setdefault("Approved", "")
     structured.setdefault("Flagged", "false")
+    structured.setdefault("Diameter", "")
 
     # Update Flagged
     new_flagged = "true" if request.form.get("Flagged") == "on" else "false"
@@ -287,10 +408,13 @@ def save_review(doc_id):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(json_data, f, ensure_ascii=False, indent=4)
 
-    # Next/Prev navigation stays within review context
+    # Next/Prev navigation stays within review context (BF-only order)
     all_files = sorted(
         f for f in os.listdir(JSON_DIR)
-        if f.endswith(".json") and not f.endswith("_raw_ocr.json") and JSON_NAME_RE.match(f)
+        if f.endswith(".json")
+        and not f.endswith("_raw_ocr.json")
+        and JSON_NAME_RE.match(f)
+        and JSON_NAME_RE.match(f).groups()[1].upper() == "BF"
     )
     current_name = f"{doc_id}.json"
     try:

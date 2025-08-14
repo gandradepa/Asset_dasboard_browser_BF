@@ -44,7 +44,7 @@
 
         <div class="viewer mb-4">
             <div class="main-image-wrap">
-                {% set default_tag = '-0' if images.get('-0') and images['-0'].exists else (('-1' if images.get('-1') and images['-1'].exists else ('-2' if images.get('-2') and images['-2'].exists else ('-3' if images.get('-3') and images['-3'].exists else None)))) %}
+                {% set default_tag = '-0' if images.get('-0') and images['-0'].exists else (('-1' if images.get('-1') and images['-1'].exists else ('-2' if images.get('-2') and images['-2'].exists else None))) %}
                 {% set default_url = images[default_tag].url if default_tag else None %}
                 <img id="mainImage" class="main-image" src="{{ default_url if default_url else '' }}" alt="Main asset image">
                 <div class="d-flex justify-content-center gap-2 mt-3 controls">
@@ -59,7 +59,7 @@
             </div>
 
             <div class="thumbs">
-                {% for tag,label in {'-0':'Asset Plate/Label','-1':'UBC Asset Tag','-2':'Main Asset','-3':'TSBC Label'}.items() %}
+                {% for tag,label in {'-0':'Asset Plate/Label','-1':'Asset Plate/Label (Optional)','-2':'Main Asset'}.items() %}
                     {% set im = images.get(tag) %}
                     <div class="thumb {% if default_tag == tag %}active{% endif %}" data-url="{{ im.url if im and im.exists else '' }}" data-tag="{{ tag }}">
                         <div class="px-2 pt-2 small">{{ label }}</div>
@@ -89,9 +89,19 @@
             <div>
                 <label class="form-label">Attribute</label>
                 <select class="form-select" name="Attribute">
-                    <option value=""></option>
                     {% for opt in attribute_options %}
-                        <option value="{{ opt }}" {% if (data.get('Attribute') or '') == opt %}selected{% endif %}>{{ opt }}</option>
+                        <option value="{{ opt }}" {% if (data.get('Attribute') or 'BackflowDevice') == opt %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- ✅ NEW: Application dropdown from DB -->
+            <div>
+                <label class="form-label">Application</label>
+                <select class="form-select" name="Application">
+                    <option value=""></option>
+                    {% for opt in application_options %}
+                        <option value="{{ opt }}" {% if (data.get('Application') or '') == opt %}selected{% endif %}>{{ opt }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -102,7 +112,7 @@
             </div>
 
             {% for key, value in data.items() %}
-                {% if key not in ['Flagged', 'Asset Group', 'Attribute', 'Description'] %}
+                {% if key not in ['Flagged', 'Asset Group', 'Attribute', 'Application', 'Description'] %}
                     <div>
                         <label class="form-label">{{ key }}</label>
                         <input type="text" class="form-control" name="{{ key }}" value="{{ value }}">
