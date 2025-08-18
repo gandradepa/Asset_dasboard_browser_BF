@@ -1,248 +1,313 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>Review {{ qr_code }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        .viewer { display: flex; gap: 1rem; align-items: flex-start; }
-        .main-image-wrap { flex: 1; text-align: center; }
-        .main-image { max-width: 100%; max-height: 70vh; transition: transform 0.2s ease; border: 1px solid #e5e5e5; border-radius: .5rem; background: #f8f9fa; }
-        .thumbs { width: 220px; display: flex; flex-direction: column; gap: .75rem; }
-        .thumb { cursor: pointer; border: 2px solid transparent; border-radius: .375rem; overflow: hidden; background: #fff; }
-        .thumb.active { border-color: #0d6efd; }
-        .thumb img { width: 100%; height: auto; display: block; }
-        .controls .btn { min-width: 120px; }
-        .field-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 1rem 1.25rem; }
-        @media (max-width: 992px) { .viewer { flex-direction: column; } .thumbs { width: 100%; flex-direction: row; flex-wrap: wrap; } .thumb { width: 140px; } .field-grid { grid-template-columns: 1fr; } }
-        .muted { color: #6c757d; }
-    </style>
+  <meta charset="utf-8" />
+  <title>{{ title or 'Asset Review - Backflow Devices' }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .viewer {
+      position: relative;
+      width: 100%;
+      background: #f7f9fb;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 420px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .viewer img {
+      max-width: 100%;
+      max-height: 70vh;
+      transition: transform 0.2s ease;
+      transform-origin: center center;
+    }
+    .thumbs img {
+      height: 82px;
+      width: auto;
+      object-fit: contain;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 4px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .thumbs img.active {
+      border-color: #0d6efd;
+      box-shadow: 0 0 0 2px rgba(13,110,253,.25);
+    }
+    .label-sm {
+      font-size: .85rem;
+      color: #6b7280;
+    }
+  </style>
 </head>
-<body class="container py-4">
+<body class="container-fluid py-3">
 
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div class="d-flex align-items-center">
-            <a href="{{ url_for('index') }}">
-                <img src="{{ url_for('static', filename='ubc-logo.png') }}" alt="UBC Logo" style="height: 64px; margin-right: 16px;">
-            </a>
-            <div>
-                <h2 class="m-0">Review Asset: {{ qr_code }}</h2>
-                <div class="muted">
-                    Building: <strong>{{ building }}</strong>
-                    &nbsp;•&nbsp;
-                    Type: <strong>{{ (asset_type or '') | upper | replace('-', '') | trim }}</strong>
-                </div>
-            </div>
-        </div>
-        <div>
-            <a id="backLink" href="{{ url_for('index') }}" class="btn btn-secondary">Back to Dashboard</a>
-        </div>
+  <!-- Header -->
+  <div class="d-flex justify-content-start align-items-center mb-3">
+    <a href="{{ url_for('index') }}">
+      <img src="{{ url_for('static', filename='ubc-logo.png') }}" alt="UBC Logo" style="height: 60px; margin-right: 16px;">
+    </a>
+    <div>
+      <h2 class="m-0">{{ title or 'Asset Review - Backflow Devices' }}</h2>
+      <div class="text-muted">
+        <span class="me-3"><strong>QR:</strong> {{ qr_code }}</span>
+        <span class="me-3"><strong>Building:</strong> {{ building }}</span>
+        <span class="me-3"><strong>Type:</strong> BF</span>
+        <span><strong>Doc:</strong> {{ doc_id }}</span>
+      </div>
     </div>
+  </div>
 
-    <form method="POST" action="{{ url_for('save_review', doc_id=doc_id) }}">
-        <input type="hidden" name="dashboard_query" id="dashboard_query" value="">
+  <form method="POST" action="{{ url_for('save_review', doc_id=doc_id) }}" id="reviewForm">
+    <!-- hidden: keep Approved without showing it -->
+    <input type="hidden" name="Approved" value="{{ data.get('Approved','') }}">
+    <!-- hidden: action = save / save_next / save_prev -->
+    <input type="hidden" name="action" id="actionField" value="save">
+    <!-- hidden: dashboard querystring to return with filters -->
+    <input type="hidden" name="dashboard_query" id="dashboardQuery" value="">
 
-        <div class="viewer mb-4">
-            <div class="main-image-wrap">
-                {% set default_tag = '-0' if images.get('-0') and images['-0'].exists else (('-1' if images.get('-1') and images['-1'].exists else ('-2' if images.get('-2') and images['-2'].exists else None))) %}
-                {% set default_url = images[default_tag].url if default_tag else None %}
-                <img id="mainImage" class="main-image" src="{{ default_url if default_url else '' }}" alt="Main asset image">
-                <div class="d-flex justify-content-center gap-2 mt-3 controls">
-                    <button type="button" class="btn btn-outline-primary btn-sm" id="zoomIn">+ Zoom</button>
-                    <button type="button" class="btn btn-outline-primary btn-sm" id="zoomOut">- Zoom</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="rotate">Rotate</button>
-                    <button type="submit" class="btn btn-outline-dark btn-sm" name="action" value="save_prev">⬅️ Save & Previous</button>
-                    <button type="submit" class="btn btn-primary btn-sm" name="action" value="save">💾 Save</button>
-                    <button type="submit" class="btn btn-primary btn-sm" name="action" value="save_next">💾 Save & Next ➡️</button>
-                    <button type="submit" class="btn btn-outline-warning btn-sm" name="action" value="save_next">Skip</button>
-                </div>
-            </div>
-
-            <div class="thumbs">
-                {% for tag,label in {'-0':'Asset Plate/Label','-1':'Asset Plate/Label (Optional)','-2':'Main Asset'}.items() %}
-                    {% set im = images.get(tag) %}
-                    <div class="thumb {% if default_tag == tag %}active{% endif %}" data-url="{{ im.url if im and im.exists else '' }}" data-tag="{{ tag }}">
-                        <div class="px-2 pt-2 small">{{ label }}</div>
-                        {% if im and im.exists %}
-                            <img src="{{ im.url }}" alt="{{ tag }}">
-                        {% else %}
-                            <div class="d-flex align-items-center justify-content-center" style="height:100px;background:#f8d7da;color:#842029;">❌ Missing</div>
-                        {% endif %}
-                    </div>
-                {% endfor %}
-            </div>
+    <div class="row g-4">
+      <!-- Left: Images -->
+      <div class="col-lg-7">
+        <div class="viewer mb-3">
+          {% set first_url = (images.get('-0') and images['-0']['url']) or
+                             (images.get('-1') and images['-1']['url']) or
+                             (images.get('-2') and images['-2']['url']) %}
+          {% if first_url %}
+            <img id="mainImage" src="{{ first_url }}" alt="Asset image">
+          {% else %}
+            <div class="text-muted">No images found.</div>
+          {% endif %}
         </div>
 
-        <h4 class="mb-3">Manual Review</h4>
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="zoomOut">- Zoom</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="zoomIn">+ Zoom</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="rotate">Rotate</button>
+          <div class="ms-auto d-flex gap-2">
+            <a class="btn btn-light btn-sm" id="backToDash" href="{{ url_for('index') }}">Back</a>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="skipBtn">Skip</button>
+          </div>
+        </div>
 
-        <div class="field-grid mb-3">
-            <div>
-                <label class="form-label">Asset Group</label>
-                <select class="form-select" name="Asset Group">
-                    <option value=""></option>
-                    {% for opt in asset_group_options %}
-                        <option value="{{ opt }}" {% if (data.get('Asset Group') or '') == opt %}selected{% endif %}>{{ opt }}</option>
-                    {% endfor %}
+        <!-- Thumbs (BF uses only -0, -1, -2) -->
+        <div class="thumbs d-flex flex-wrap gap-2">
+          {% for tag,label in [('-0','Asset Plate/Label'),('-1','Asset Plate/Label (Optional)'),('-2','Main Asset')] %}
+            {% set it = images.get(tag) %}
+            {% if it and it['exists'] %}
+              <div class="text-center">
+                <img src="{{ it['url'] }}" data-seq="{{ tag }}" class="{% if it['url']==first_url %}active{% endif %}" alt="{{ label }}">
+                <div class="label-sm mt-1">{{ label }}</div>
+              </div>
+            {% else %}
+              <div class="text-center">
+                <div class="d-flex align-items-center justify-content-center"
+                     style="height:82px;width:124px;border:1px solid #e5e7eb;border-radius:8px;background:#f8d7da;color:#842029;">
+                  ❌
+                </div>
+                <div class="label-sm mt-1">{{ label }}</div>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Right: Form -->
+      <div class="col-lg-5">
+        <div class="card">
+          <div class="card-body">
+
+            <div class="row g-3">
+              <!-- 4 principais (BF keeps these 3 + Diameter) -->
+              <div class="col-md-12">
+                <label class="form-label">Manufacturer</label>
+                <input type="text" class="form-control" name="Manufacturer" value="{{ data.get('Manufacturer','') }}">
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Model</label>
+                <input type="text" class="form-control" name="Model" value="{{ data.get('Model','') }}">
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Serial Number</label>
+                <input type="text" class="form-control" name="Serial Number" value="{{ data.get('Serial Number','') }}">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Diameter</label>
+                <input type="text" class="form-control" name="Diameter" value="{{ data.get('Diameter','') }}">
+              </div>
+              <div class="col-md-6 d-flex align-items-end">
+                <div class="form-check mt-3">
+                  <input class="form-check-input" type="checkbox" id="flagged" name="Flagged" {% if data.get('Flagged') == 'true' %}checked{% endif %}>
+                  <label class="form-check-label" for="flagged">Flag for Review</label>
+                </div>
+              </div>
+
+              <div class="col-md-12">
+                <label class="form-label">UBC Tag</label>
+                <input type="text" class="form-control" name="UBC Tag" value="{{ data.get('UBC Tag','') }}">
+              </div>
+
+              <div class="col-md-12">
+                <label class="form-label">Application</label>
+                <select class="form-select" name="Application" id="applicationSelect">
+                  <option value=""></option>
+                  {% for opt in application_options %}
+                    <option value="{{ opt }}" {% if (data.get('Application') or '') == opt %}selected{% endif %}>{{ opt }}</option>
+                  {% endfor %}
                 </select>
-            </div>
+              </div>
 
-            <div>
+              <div class="col-md-12">
+                <label class="form-label">Asset Group</label>
+                <select class="form-select" name="Asset Group" id="assetGroupSelect">
+                  <option value=""></option>
+                  {% for opt in asset_group_options %}
+                    <option value="{{ opt }}" {% if (data.get('Asset Group') or '') == opt %}selected{% endif %}>{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-md-12">
                 <label class="form-label">Attribute</label>
                 <select class="form-select" name="Attribute">
-                    {% for opt in attribute_options %}
-                        <option value="{{ opt }}" {% if (data.get('Attribute') or 'BackflowDevice') == opt %}selected{% endif %}>{{ opt }}</option>
-                    {% endfor %}
+                  {% for opt in attribute_options %}
+                    <option value="{{ opt }}" {% if (data.get('Attribute') or 'BackflowDevice') == opt %}selected{% endif %}>{{ opt }}</option>
+                  {% endfor %}
                 </select>
-            </div>
+              </div>
 
-            <div>
-                <label class="form-label">Application</label>
-                <select class="form-select" name="Application">
-                    <option value=""></option>
-                    {% for opt in application_options %}
-                        <option value="{{ opt }}" {% if (data.get('Application') or '') == opt %}selected{% endif %}>{{ opt }}</option>
-                    {% endfor %}
-                </select>
-            </div>
+              <!-- Description auto: BFP-<Application + space><First word of Asset Group + space>BFP -->
+              <div class="col-md-12">
+                <label class="form-label">Description (auto)</label>
+                <input type="text" class="form-control" name="Description" id="descField" value="{{ data.get('Description','') }}" readonly>
+                <div class="form-text">
+                  <div class="form-text fw-bold">Generated Automatically</div>
+                </div>
+              </div>
 
-            <!-- Editable Description with Auto-fill button -->
-            <div>
-                <label class="form-label d-flex align-items-center gap-2">
-                    Description
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="autoFillDesc" title="Recompute from Application and Asset Group">↺ Auto‑fill</button>
-                </label>
-                <input id="descField" name="Description" type="text" class="form-control" value="{{ data.get('Description','') }}">
-            </div>
-
-            {% for key, value in data.items() %}
-                {% if key not in ['Flagged', 'Asset Group', 'Attribute', 'Application', 'Description'] %}
-                    <div>
-                        <label class="form-label">{{ key }}</label>
-                        <input type="text" class="form-control" name="{{ key }}" value="{{ value }}">
-                    </div>
+              <!-- Any extra keys not already shown (excluding Approved, Flagged, etc.) -->
+              {% set excluded = ['Manufacturer','Model','Serial Number','Diameter','UBC Tag','Application','Asset Group','Attribute','Description','Approved','Flagged'] %}
+              {% for key, value in data.items() %}
+                {% if key not in excluded %}
+                  <div class="col-md-12">
+                    <label class="form-label">{{ key }}</label>
+                    <input type="text" class="form-control" name="{{ key }}" value="{{ value }}">
+                  </div>
                 {% endif %}
-            {% endfor %}
+              {% endfor %}
+            </div>
+
+            <hr class="my-4">
+
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn btn-primary" id="saveBtn">Save</button>
+              <button type="button" class="btn btn-outline-secondary" id="savePrevBtn">Save &amp; Prev</button>
+              <button type="button" class="btn btn-outline-secondary" id="saveNextBtn">Save &amp; Next</button>
+              <a class="btn btn-light ms-auto" id="backBtn" href="{{ url_for('index') }}">Back to Dashboard</a>
+            </div>
+
+          </div>
         </div>
+      </div>
+    </div>
+  </form>
 
-        <div class="form-check mb-4">
-            <input class="form-check-input" type="checkbox" name="Flagged" id="flagged" {% if data.get('Flagged') == 'true' %}checked{% endif %}>
-            <label class="form-check-label" for="flagged">Flag for Review</label>
-        </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Persist dashboard query
+    (function(){
+      try {
+        var q = localStorage.getItem('dashboardQuery') || '';
+        document.getElementById('dashboardQuery').value = q.startsWith('?') ? q : '';
+        if (q) {
+          var backLink = document.getElementById('backToDash');
+          if (backLink) backLink.href = backLink.href + q;
+          var backBtn = document.getElementById('backBtn');
+          if (backBtn) backBtn.href = backBtn.href + q;
+        }
+      } catch(e) {}
+    })();
 
-        <div class="d-flex gap-2 mb-4">
-            <a id="backLinkBottom" href="{{ url_for('index') }}" class="btn btn-secondary">Back</a>
-            <button type="submit" class="btn btn-primary" name="action" value="save">💾 Save</button>
-            <button type="submit" class="btn btn-primary" name="action" value="save_next">💾 Save & Next</button>
-            <button type="submit" class="btn btn-outline-primary" name="action" value="save_prev">⬅️ Save & Previous</button>
-        </div>
-    </form>
+    // Thumbnails -> switch main image
+    (function(){
+      var mainImg = document.getElementById('mainImage');
+      if (!mainImg) return;
+      var thumbs = document.querySelectorAll('.thumbs img');
+      thumbs.forEach(function(t){
+        t.addEventListener('click', function(){
+          thumbs.forEach(function(x){ x.classList.remove('active'); });
+          t.classList.add('active');
+          mainImg.src = t.src;
+          // reset transform on image change
+          scale = 1.0; rotation = 0; applyTransform();
+        });
+      });
+    })();
 
-    <footer class="text-center mt-5 pt-4 border-top text-muted small">
-        © 2025 University of British Columbia - Maintenance Planning Department. All rights reserved.
-    </footer>
+    // Zoom/Rotate
+    var scale = 1.0;
+    var rotation = 0;
+    var mainImage = document.getElementById('mainImage');
 
-    <script>
-        (function() {
-            // ===== Image viewer controls =====
-            const mainImg = document.getElementById('mainImage');
-            let scale = 1.0, rotation = 0;
+    function applyTransform() {
+      if (!mainImage) return;
+      mainImage.style.transform = 'scale(' + scale + ') rotate(' + rotation + 'deg)';
+    }
+    document.getElementById('zoomIn')?.addEventListener('click', function(){ scale = Math.min(5, scale + 0.1); applyTransform(); });
+    document.getElementById('zoomOut')?.addEventListener('click', function(){ scale = Math.max(0.2, scale - 0.1); applyTransform(); });
+    document.getElementById('rotate')?.addEventListener('click', function(){ rotation = (rotation + 90) % 360; applyTransform(); });
 
-            function applyTransform() {
-                mainImg.style.transform = 'scale(' + scale + ') rotate(' + rotation + 'deg)';
-            }
+    // Buttons
+    document.getElementById('savePrevBtn')?.addEventListener('click', function(){
+      document.getElementById('actionField').value = 'save_prev';
+      document.getElementById('reviewForm').submit();
+    });
+    document.getElementById('saveNextBtn')?.addEventListener('click', function(){
+      document.getElementById('actionField').value = 'save_next';
+      document.getElementById('reviewForm').submit();
+    });
+    document.getElementById('skipBtn')?.addEventListener('click', function(){
+      document.getElementById('actionField').value = 'save_next';
+      document.getElementById('reviewForm').submit();
+    });
+    document.getElementById('saveBtn')?.addEventListener('click', function(){
+      document.getElementById('actionField').value = 'save';
+    });
 
-            document.getElementById('zoomIn').addEventListener('click', function() { scale = Math.min(scale + 0.1, 3.5); applyTransform(); });
-            document.getElementById('zoomOut').addEventListener('click', function() { scale = Math.max(scale - 0.1, 0.3); applyTransform(); });
-            document.getElementById('rotate').addEventListener('click', function() { rotation = (rotation + 90) % 360; applyTransform(); });
+    // Auto Description (BF): BFP-<Application + space><First word of Asset Group + space>BFP
+    function computeBFDescription(appVal, assetGroupVal) {
+      var prefix = "BFP-";
+      var suffix = "BFP";
+      var app = (appVal || "").trim();
+      var appPart = app ? (app + " ") : "";
+      var firstWord = "";
+      if (assetGroupVal && assetGroupVal.trim()) {
+        firstWord = assetGroupVal.trim().split(/\s+/)[0] + " ";
+      }
+      return (prefix + appPart + firstWord + suffix).trim();
+    }
+    (function(){
+      var desc = document.getElementById('descField');
+      var appSel = document.getElementById('applicationSelect');
+      var agSel  = document.getElementById('assetGroupSelect');
 
-            document.querySelectorAll('.thumb').forEach(function(el) {
-                el.addEventListener('click', function() {
-                    const url = el.getAttribute('data-url');
-                    if (url) {
-                        document.querySelectorAll('.thumb').forEach(t => t.classList.remove('active'));
-                        el.classList.add('active');
-                        mainImg.src = url;
-                        scale = 1.0; rotation = 0; applyTransform();
-                    }
-                });
-            });
+      function refreshDesc(force){
+        if (!desc) return;
+        var current = (desc.value || '').trim();
+        var computed = computeBFDescription(appSel ? appSel.value : '', agSel ? agSel.value : '');
+        if (force || !current) desc.value = computed;
+      }
 
-            // ===== Preserve dashboard quick-filters (query string) =====
-            try {
-                const savedQuery = localStorage.getItem('dashboardQuery') || '';
-                const backTop = document.getElementById('backLink');
-                const backBottom = document.getElementById('backLinkBottom');
-                if (savedQuery && savedQuery !== '?') {
-                    if (backTop) backTop.href = backTop.href + savedQuery;
-                    if (backBottom) backBottom.href = backBottom.href + savedQuery;
-                }
-                const hidden = document.getElementById('dashboard_query');
-                if (hidden) hidden.value = savedQuery || '';
-            } catch (e) {}
+      // initial fill if empty; otherwise keep existing
+      refreshDesc(false);
 
-            // ===== Live Description recompute with manual override support =====
-            let descEdited = false; // becomes true when user types
-
-            function computeDescription(appVal, assetGroupVal) {
-                // Build: BFP-<Application + space><First word of Asset Group + space>BFP
-                var prefix = "BFP-";
-                var suffix = "BFP";
-
-                var app = (appVal || "").trim();
-                var appPart = app ? (app + " ") : "";
-
-                var firstWord = "";
-                if (assetGroupVal && assetGroupVal.trim()) {
-                    firstWord = assetGroupVal.trim().split(/\s+/)[0] + " ";
-                }
-
-                return (prefix + appPart + firstWord + suffix).trim();
-            }
-
-            function updateDescription(force=false) {
-                var descField = document.getElementById("descField");
-                if (!descField) return;
-
-                if (descEdited && !force) return; // don't override manual edits
-
-                var appEl = document.querySelector('select[name="Application"]');
-                var agEl  = document.querySelector('select[name="Asset Group"]');
-
-                var appVal = appEl ? appEl.value : "";
-                var agVal  = agEl ? agEl.value  : "";
-
-                descField.value = computeDescription(appVal, agVal);
-            }
-
-            document.addEventListener("DOMContentLoaded", function () {
-                var descField = document.getElementById("descField");
-                var appEl = document.querySelector('select[name="Application"]');
-                var agEl  = document.querySelector('select[name="Asset Group"]');
-                var autoBtn = document.getElementById("autoFillDesc");
-
-                // If there is an existing (non-empty) description, treat it as a manual value.
-                if (descField && descField.value.trim()) {
-                    descEdited = true;
-                } else {
-                    updateDescription(true); // initial auto-fill if blank
-                }
-
-                if (descField) {
-                    descField.addEventListener("input", function() {
-                        descEdited = true;
-                    });
-                }
-                if (appEl) appEl.addEventListener("change", function(){ updateDescription(false); });
-                if (agEl)  agEl.addEventListener("change", function(){ updateDescription(false); });
-
-                if (autoBtn) {
-                    autoBtn.addEventListener("click", function() {
-                        descEdited = false;
-                        updateDescription(true);
-                    });
-                }
-            });
-        })();
-    </script>
+      appSel?.addEventListener('change', function(){ refreshDesc(true); });
+      agSel?.addEventListener('change', function(){ refreshDesc(true); });
+    })();
+  </script>
 </body>
 </html>
