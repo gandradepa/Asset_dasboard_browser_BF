@@ -15,7 +15,7 @@ app = Flask(
 JSON_DIR = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\API\Output_jason_api"
 IMG_DIR  = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\Capture_photos_upload"
 
-# --- SQLite DB (for dropdown options) ---
+# --- SQLite DB (for dropdown options & Approved upsert) ---
 DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\asset_capture_app\data\QR_codes.db"
 
 # Tables/columns (only used where relevant)
@@ -177,12 +177,6 @@ def _compute_description(asset_group: str, ubc_tag: str, application: str = "") 
     """
     Build Description as:
       BFP-<Application + space><First word of Asset Group + space>BFP
-
-    Example:
-      Application='DCW', Asset Group='Secondary Backflow Devices'
-      -> 'BFP-DCW Secondary BFP'
-
-    Note: ubc_tag kept in signature for compatibility; not used in this format.
     """
     prefix = "BFP-"
     suffix = "BFP"
@@ -196,6 +190,34 @@ def _compute_description(asset_group: str, ubc_tag: str, application: str = "") 
         first_word_group = asset_group.strip().split()[0] + " "
 
     return f"{prefix}{app_part}{first_word_group}{suffix}".strip()
+
+
+def parse_doc_id(doc_id: str):
+    """Return (qr, asset_type_mid, building) if matches pattern, else None."""
+    m = JSON_NAME_RE.match(f"{doc_id}.json")
+    if not m:
+        return None
+    return m.groups()
+
+
+def upsert_approved_in_db(qr_code: str, is_approved: bool):
+    """Create table if needed and upsert Approved ('1' for True, '' for False)."""
+    if not _connectable():
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute('CREATE TABLE IF NOT EXISTS "QR_codes" ("QR_code_ID" TEXT PRIMARY KEY, "Approved" TEXT)')
+            new_val = '1' if is_approved else ''
+            # UPSERT
+            cur.execute(
+                'INSERT INTO "QR_codes" ("QR_code_ID","Approved") VALUES (?,?) '
+                'ON CONFLICT("QR_code_ID") DO UPDATE SET "Approved"=excluded."Approved"',
+                (qr_code, new_val)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"⚠️ Failed to update QR_codes.Approved for {qr_code}: {e}")
 
 
 def load_json_items():
@@ -238,7 +260,6 @@ def load_json_items():
             data.setdefault("Diameter", "")                  # new field
 
             # Derived: Description from Application + Asset Group
-            # Only compute if missing/blank to preserve manual overrides
             if not (data.get("Description") or "").strip():
                 data["Description"] = _compute_description(
                     data.get("Asset Group"),
@@ -330,6 +351,7 @@ def review(doc_id):
         return "Bad ID", 400
 
     qr, asset_type_mid, building = m.groups()
+    # ✅ Hard block to BF assets for this dashboard
     if asset_type_mid.upper() != "BF":
         return "Not BF asset", 404
 
@@ -476,7 +498,7 @@ def save_review(doc_id):
 
 @app.route("/toggle_approved/<doc_id>", methods=["POST"])
 def toggle_approved(doc_id):
-    """Toggle Approved between '' (False) and 'True' (True) and persist to file."""
+    """Toggle Approved between '' (False) and 'True' (True), persist to file, and upsert DB QR_codes.Approved ('1' when True)."""
     json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
     if not os.path.exists(json_path):
         return jsonify({"success": False, "error": "Not found"}), 404
@@ -496,6 +518,13 @@ def toggle_approved(doc_id):
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_data, f, ensure_ascii=False, indent=4)
+
+        # Upsert to DB (Approved '1' if True, else '')
+        parsed = parse_doc_id(doc_id)
+        if parsed:
+            qr, asset_type_mid, _building = parsed
+            if asset_type_mid.upper() == "BF":
+                upsert_approved_in_db(qr, structured["Approved"] == "True")
 
         return jsonify({"success": True, "new_value": structured["Approved"]})
     except Exception as e:
