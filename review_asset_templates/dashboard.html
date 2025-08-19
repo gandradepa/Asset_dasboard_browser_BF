@@ -77,11 +77,11 @@
             <tr>
                 <th class="text-center">QR Code</th>           <!-- 0 -->
                 <th class="text-center">Building</th>           <!-- 1 -->
-                <th class="text-center">Type</th>               <!-- 2 (hidden via DataTables) -->
+                <th class="text-center">Type</th>               <!-- 2 (hidden) -->
                 <th class="text-start">Manufacturer</th>        <!-- 3 -->
                 <th class="text-start">Model</th>               <!-- 4 -->
                 <th class="text-start">Serial</th>              <!-- 5 -->
-                <th class="text-start">Asset Plate/Label</th>   <!-- 6 (UBC Tag) -->
+                <th class="text-start">UBC Tag</th>             <!-- 6 (VISIBLE) -->
                 <th class="text-start">Asset Group</th>         <!-- 7 -->
                 <th class="text-start">Attribute</th>           <!-- 8 -->
                 <th class="text-start">Description</th>         <!-- 9 -->
@@ -158,7 +158,7 @@
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
 
     <script>
-      // Remember dashboard query string for sticky quick-filters across Review
+      // Persist quick-filters across Review
       try { localStorage.setItem('dashboardQuery', window.location.search || ''); } catch (e) {}
 
       // Tooltips
@@ -170,10 +170,17 @@
       $(document).ready(function () {
           // Column indexes (0-based):
           // 0 QR, 1 Building, 2 Type (hidden), 3 Manufacturer, 4 Model, 5 Serial,
-          // 6 UBC Tag, 7 Asset Group, 8 Attribute, 9 Description, 10 Diameter,
+          // 6 UBC Tag (visible), 7 Asset Group, 8 Attribute, 9 Description, 10 Diameter,
           // 11 Approved, 12 Flagged, 13 Modified, 14 Missed, 15 Action
-          var colQR = 0, colBuilding = 1, colType = 2, colModel = 4,
-              colAssetGroup = 7, colAttribute = 8, colDescription = 9, colDiameter = 10,
+          var colQR = 0,
+              colBuilding = 1,
+              colType = 2,
+              colModel = 4,
+              colUBCTag = 6,
+              colAssetGroup = 7,
+              colAttribute = 8,
+              colDescription = 9,
+              colDiameter = 10,
               colApproved = 11;
 
           var table = $('#assetTable').DataTable({
@@ -182,10 +189,12 @@
               stateSave: true,
               stateDuration: -1,
               columnDefs: [
-                  // Hide "Type"
+                  // Hide only "Type"
                   { targets: [colType], visible: false, searchable: false },
-                  // Orderable columns
-                  { orderable: true, targets: [colQR, colBuilding, colModel, colAssetGroup, colAttribute, colDescription, colDiameter] },
+
+                  // Orderable columns (UBC Tag included)
+                  { orderable: true, targets: [colQR, colBuilding, colModel, colUBCTag, colAssetGroup, colAttribute, colDescription, colDiameter] },
+
                   // Not orderable: Approved toggle
                   { orderable: false, targets: [colApproved] }
               ],
@@ -196,7 +205,7 @@
               }
           });
 
-          // Badge colors (won't show since column hidden, but harmless)
+          // Badge colors (Type is hidden, but harmless to keep)
           function applyTypeBadges() {
               $('#assetTable span.type-badge').each(function () {
                   var t = ($(this).data('type') || '').toString().trim().toUpperCase();
@@ -215,7 +224,7 @@
           applyTypeBadges();
           table.on('draw', applyTypeBadges);
 
-          // Populate Building select from table
+          // Populate Building filter from table data
           function populateBuilding() {
               var select = $('#filter-building');
               select.find('option:not(:first)').remove();
@@ -270,7 +279,7 @@
               }
           });
 
-          // Column search using data-search for Approved
+          // Use data-search for Approved column filtering
           $.fn.dataTable.ext.order['dom-data-search'] = function (settings, col) {
               return this.api().column(col, { order: 'index' }).nodes().map(function (td) {
                   return $(td).attr('data-search') || '';
@@ -279,7 +288,7 @@
           $.fn.dataTable.ext.search.push(function (settings, data, dataIndex, rowData, counter) {
               var col = colApproved;
               var search = settings.aoPreSearchCols[col].sSearch; // regex if regex=true
-              if (!search) return true; // no filter
+              if (!search) return true;
               var td = settings.aoData[dataIndex].anCells[col];
               var val = $(td).attr('data-search') || '';
               var regex = settings.aoPreSearchCols[col].bRegex ? new RegExp(search) : null;

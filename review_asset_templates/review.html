@@ -38,10 +38,7 @@
       border-color: #0d6efd;
       box-shadow: 0 0 0 2px rgba(13,110,253,.25);
     }
-    .label-sm {
-      font-size: .85rem;
-      color: #6b7280;
-    }
+    .label-sm { font-size: .85rem; color: #6b7280; }
   </style>
 </head>
 <body class="container-fluid py-3">
@@ -122,7 +119,7 @@
           <div class="card-body">
 
             <div class="row g-3">
-              <!-- 4 principais (BF keeps these 3 + Diameter) -->
+              <!-- Core BF fields -->
               <div class="col-md-12">
                 <label class="form-label">Manufacturer</label>
                 <input type="text" class="form-control" name="Manufacturer" value="{{ data.get('Manufacturer','') }}">
@@ -180,13 +177,11 @@
                 </select>
               </div>
 
-              <!-- Description auto: BFP-<Application + space><First word of Asset Group + space>BFP -->
+              <!-- Description (auto) now EDITABLE -->
               <div class="col-md-12">
                 <label class="form-label">Description (auto)</label>
-                <input type="text" class="form-control" name="Description" id="descField" value="{{ data.get('Description','') }}" readonly>
-                <div class="form-text">
-                  <div class="form-text fw-bold">Generated Automatically</div>
-                </div>
+                <input type="text" class="form-control" name="Description" id="descField" value="{{ data.get('Description','') }}">
+                <div class="form-text fw-bold">Generated Automatically</div>
               </div>
 
               <!-- Any extra keys not already shown (excluding Approved, Flagged, etc.) -->
@@ -278,7 +273,7 @@
       document.getElementById('actionField').value = 'save';
     });
 
-    // Auto Description (BF): BFP-<Application + space><First word of Asset Group + space>BFP
+    // Auto Description (BF): compute but DON'T override manual edits
     function computeBFDescription(appVal, assetGroupVal) {
       var prefix = "BFP-";
       var suffix = "BFP";
@@ -291,22 +286,30 @@
       return (prefix + appPart + firstWord + suffix).trim();
     }
     (function(){
-      var desc = document.getElementById('descField');
+      var desc   = document.getElementById('descField');
       var appSel = document.getElementById('applicationSelect');
       var agSel  = document.getElementById('assetGroupSelect');
+      var descEdited = false;
 
-      function refreshDesc(force){
+      function refreshDesc() {
         if (!desc) return;
-        var current = (desc.value || '').trim();
+        if (descEdited) return; // respect manual edits
         var computed = computeBFDescription(appSel ? appSel.value : '', agSel ? agSel.value : '');
-        if (force || !current) desc.value = computed;
+        // fill only if empty OR previously auto-generated
+        if (!desc.value.trim()) {
+          desc.value = computed;
+        }
       }
 
       // initial fill if empty; otherwise keep existing
-      refreshDesc(false);
+      refreshDesc();
 
-      appSel?.addEventListener('change', function(){ refreshDesc(true); });
-      agSel?.addEventListener('change', function(){ refreshDesc(true); });
+      // detect manual edits
+      desc?.addEventListener('input', function(){ descEdited = true; });
+
+      // recompute on selectors change, but don't override if manually edited
+      appSel?.addEventListener('change', refreshDesc);
+      agSel?.addEventListener('change', refreshDesc);
     })();
   </script>
 </body>
