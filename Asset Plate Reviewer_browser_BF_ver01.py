@@ -15,13 +15,12 @@ app = Flask(
 JSON_DIR = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\API\Output_jason_api"
 IMG_DIR  = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\Capture_photos_upload"
 
-# --- SQLite DB (for dropdown options & Approved upsert & sdi_dataset sync) ---
-DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\asset_capture_app_dev\data\QR_codes.db"
+# --- SQLite DB (for dropdown options & syncs) ---
+DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\asset_capture_app\data\QR_codes.db"
 
-# Tables/columns (only used where relevant)
+# Tables/columns
 ASSET_GROUP_TABLE = "Asset_Group"
 ASSET_GROUP_COL   = "name"
-ATTRIBUTE_TABLE   = "Attribute"  # not used directly since we lock Attribute to BackflowDevice
 
 # --- Application table autodetection ---
 APPLICATION_TABLE_CANDIDATES = [
@@ -42,10 +41,6 @@ JSON_NAME_RE = re.compile(r"^(\d+)_([A-Za-z]+)_(\d+(?:-\d+)?)\.json$")
 
 
 def find_image(qr: str, building: str, asset_type_mid: str, seq_tag: str):
-    """
-    Find image by pattern: '<QR> <Building> <TYPE> - <seq>.<ext>'.
-    TYPE is 'BF' per current scope/spec.
-    """
     seq = seq_tag.replace('-', '').strip()
     base = f"{qr} {building} {asset_type_mid} - {seq}"
     for ext in VALID_IMAGE_EXTS:
@@ -57,12 +52,10 @@ def find_image(qr: str, building: str, asset_type_mid: str, seq_tag: str):
 
 @lru_cache(maxsize=1)
 def _connectable():
-    """Check DB path once (cached)."""
     return os.path.exists(DB_PATH)
 
 
 def _fetch_column_values(table: str, col: str):
-    """Return sorted unique non-empty strings for dropdowns."""
     if not _connectable():
         return []
     try:
@@ -80,18 +73,15 @@ def _fetch_column_values(table: str, col: str):
 
 
 def get_asset_group_options():
-    """Restrict Asset Group dropdown to the two Backflow groups."""
     all_opts = _fetch_column_values(ASSET_GROUP_TABLE, ASSET_GROUP_COL)
     allowed = {"Primary Backflow Devices", "Secondary Backflow Devices"}
     return [opt for opt in all_opts if opt in allowed]
 
 
 def get_attribute_options():
-    """Restrict Attribute dropdown to BackflowDevice only."""
     return ["BackflowDevice"]
 
 
-# --- Robust Application loader helpers ---
 def _table_exists(conn, table_name: str) -> bool:
     cur = conn.cursor()
     cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table_name,))
@@ -99,16 +89,11 @@ def _table_exists(conn, table_name: str) -> bool:
 
 
 def _text_columns(conn, table_name: str):
-    """
-    Return a list of column names whose declared type looks text-like.
-    Falls back to *all* columns if types aren't declared.
-    """
     cur = conn.cursor()
     cur.execute(f'PRAGMA table_info("{table_name}")')
     cols = cur.fetchall()
     if not cols:
         return []
-
     text_cols, all_cols = [], []
     for cid, name, coltype, notnull, dflt, pk in cols:
         all_cols.append(name)
@@ -137,34 +122,24 @@ def _fetch_distinct_nonempty(conn, table: str, col: str):
 
 
 def get_application_options():
-    """
-    Load Application dropdown values:
-      - Try multiple table names.
-      - Introspect columns and use the first text-like column with data.
-    """
     if not _connectable():
         print("⚠️ DB not found:", DB_PATH)
         return []
-
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             for tbl in APPLICATION_TABLE_CANDIDATES:
                 if not _table_exists(conn, tbl):
                     continue
-
                 candidate_cols = ["name", "Name", "code", "Code", "application", "Application", "type", "Type"]
                 cols = _text_columns(conn, tbl)
                 ordered_cols = [c for c in candidate_cols if c in cols] + [c for c in cols if c not in candidate_cols]
-
                 for col in ordered_cols:
                     vals = _fetch_distinct_nonempty(conn, tbl, col)
                     if vals:
                         print(f"✔️ Application options from {tbl}.{col}: {len(vals)} values")
                         return vals
-
                 print(f"ℹ️ Table '{tbl}' found, but no non-empty text-like columns produced values: {cols}")
-
             print("⚠️ No Application table/values found. Tried:", APPLICATION_TABLE_CANDIDATES)
             return []
     except Exception as e:
@@ -174,26 +149,18 @@ def get_application_options():
 
 # ===== Description logic =====
 def _compute_description(asset_group: str, ubc_tag: str, application: str = "") -> str:
-    """
-    Build Description as:
-      BFP-<Application + space><First word of Asset Group + space>BFP
-    """
     prefix = "BFP-"
     suffix = "BFP"
-
     app_part = (application or "").strip()
     if app_part:
         app_part += " "
-
     first_word_group = ""
     if asset_group:
         first_word_group = asset_group.strip().split()[0] + " "
-
     return f"{prefix}{app_part}{first_word_group}{suffix}".strip()
 
 
 def parse_doc_id(doc_id: str):
-    """Return (qr, asset_type_mid, building) if matches pattern, else None."""
     m = JSON_NAME_RE.match(f"{doc_id}.json")
     if not m:
         return None
@@ -202,7 +169,6 @@ def parse_doc_id(doc_id: str):
 
 # ====== DB helpers: QR_codes.Approved and SDI dataset sync ======
 def upsert_approved_in_db(qr_code: str, is_approved: bool):
-    """Create table if needed and upsert Approved ('1' for True, '' for False)."""
     if not _connectable():
         return
     try:
@@ -221,10 +187,9 @@ def upsert_approved_in_db(qr_code: str, is_approved: bool):
 
 
 def _table_columns(conn, table_name: str):
-    """Return set of column names (exact case) for a given table."""
     cur = conn.cursor()
     cur.execute(f'PRAGMA table_info("{table_name}")')
-    return {row[1] for row in cur.fetchall()}  # name is at index 1
+    return {row[1] for row in cur.fetchall()}
 
 
 def _safe_str(v):
@@ -232,32 +197,23 @@ def _safe_str(v):
 
 
 def _build_sdi_row(doc_id: str, structured: dict) -> dict:
-    """
-    Build the row payload expected by sdi_dataset.
-    Missing values become "".
-    Approved -> '1' when 'True', else '0'.
-    Description derived same as before if blank.
-    """
     parsed = parse_doc_id(doc_id)
     if not parsed:
         return {}
     qr, _asset_type_mid, building = parsed
 
-    # Ensure keys safely exist for optional fields
     manuf = _safe_str(structured.get("Manufacturer", ""))
     model = _safe_str(structured.get("Model", ""))
-    serial = _safe_str(structured.get("Serial Number", ""))  # mapped
+    serial = _safe_str(structured.get("Serial Number", ""))
     ubc = _safe_str(structured.get("UBC Tag", ""))
     ag = _safe_str(structured.get("Asset Group", ""))
     attr = _safe_str(structured.get("Attribute", ""))
     diam = _safe_str(structured.get("Diameter", ""))
     year = _safe_str(structured.get("Year", ""))
     tsbc = _safe_str(structured.get("Technical Safety BC", ""))
-
     desc = _safe_str(structured.get("Description", ""))
     if not desc.strip():
         desc = _compute_description(ag, ubc, _safe_str(structured.get("Application", "")))
-
     approved_flag = '1' if _safe_str(structured.get("Approved", "")) == "True" else '0'
 
     return {
@@ -278,16 +234,11 @@ def _build_sdi_row(doc_id: str, structured: dict) -> dict:
 
 
 def upsert_sdi_dataset(doc_id: str, structured: dict):
-    """
-    Update or insert the row in sdi_dataset matching "QR Code".
-    Only writes columns that actually exist in the table.
-    """
     if not _connectable():
         return
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
-            # Ensure table exists (user said it's created already; this is a no-op if present)
             cur = conn.cursor()
             cur.execute('SELECT name FROM sqlite_master WHERE type="table" AND name=?', ("sdi_dataset",))
             if not cur.fetchone():
@@ -304,10 +255,7 @@ def upsert_sdi_dataset(doc_id: str, structured: dict):
                 print('⚠️ "sdi_dataset" lacks "QR Code" column; cannot upsert key. Skipping.')
                 return
 
-            # Filter to only columns that actually exist
             filtered = {k: v for k, v in payload.items() if k in cols}
-
-            # Build UPDATE ... WHERE "QR Code" = ?
             set_cols = [c for c in filtered.keys() if c != "QR Code"]
             if not set_cols:
                 print('ℹ️ Nothing to update for sdi_dataset (only key present).')
@@ -319,7 +267,6 @@ def upsert_sdi_dataset(doc_id: str, structured: dict):
             cur.execute(update_sql, update_vals)
 
             if cur.rowcount == 0:
-                # INSERT with all available columns
                 insert_cols = list(filtered.keys())
                 placeholders = ",".join(["?"] * len(insert_cols))
                 insert_sql = f'INSERT INTO "sdi_dataset" ({",".join(f"""\"{c}\"""" for c in insert_cols)}) VALUES ({placeholders})'
@@ -343,11 +290,11 @@ def load_json_items():
 
         qr, asset_type_mid, building = m.groups()
 
-        # ✅ Only BF assets
+        # Only BF assets
         if asset_type_mid.upper() != "BF":
             continue
 
-        doc_id = filename[:-5]  # strip ".json"
+        doc_id = filename[:-5]
 
         try:
             with open(os.path.join(JSON_DIR, filename), 'r', encoding='utf-8') as f:
@@ -358,21 +305,21 @@ def load_json_items():
                 print(f"⚠️ Skipped {filename}: 'structured_data' is not a dict")
                 continue
 
-            # Ensure keys exist to keep them visible/editable
+            # Ensure keys
             data.setdefault("Manufacturer", "")
             data.setdefault("Model", "")
             data.setdefault("Serial Number", "")
             data.setdefault("UBC Tag", "")
             data.setdefault("Asset Group", "")
-            data.setdefault("Attribute", "BackflowDevice")   # default value
-            data.setdefault("Application", "")               # new field
+            data.setdefault("Attribute", "BackflowDevice")
+            data.setdefault("Application", "")
             data.setdefault("Flagged", "false")
-            data.setdefault("Approved", "")                  # default blank (False)
-            data.setdefault("Diameter", "")                  # new field
+            data.setdefault("Approved", "")
+            data.setdefault("Diameter", "")
             data.setdefault("Year", "")
             data.setdefault("Technical Safety BC", "")
 
-            # Derived: Description from Application + Asset Group
+            # Derived Description
             if not (data.get("Description") or "").strip():
                 data["Description"] = _compute_description(
                     data.get("Asset Group"),
@@ -380,23 +327,18 @@ def load_json_items():
                     data.get("Application", "")
                 )
 
-            # ✅ Missed photo rule: require at least 2 of 3 present
+            # Missed photo rule: need >= 2 of 3
             present = 0
             exists_map = {}
             for tag in SEQ_CHECK:
                 exists_map[tag] = bool(find_image(qr, building, "BF", tag))
                 if exists_map[tag]:
                     present += 1
-
             missing_tags = [tag for tag in SEQ_CHECK if not exists_map[tag]]
-            friendly_map = {
-                '-0': 'Asset Plate/Label',
-                '-1': 'Asset Plate/Label (Optional)',
-                '-2': 'Main Asset'
-            }
+            friendly_map = {'-0': 'Asset Plate/Label', '-1': 'Asset Plate/Label (Optional)', '-2': 'Main Asset'}
             missing_friendly = ", ".join(friendly_map.get(tag, tag) for tag in missing_tags)
 
-            missed_photo = present < 2  # only flag if < 2 present
+            missed_photo = present < 2
             photos_summary = f"{present}/3"
 
             items.append({
@@ -423,7 +365,7 @@ def index():
     modified_filter = request.args.get("modified")
     missed_filter = request.args.get("missed")
 
-    all_data = load_json_items()  # BF-only
+    all_data = load_json_items()
 
     count_flagged = sum(1 for item in all_data if item.get("Flagged") == "true")
     count_modified = sum(1 for item in all_data if item.get("Modified"))
@@ -435,7 +377,7 @@ def index():
     elif flagged_filter == "true":
         data = [item for item in data if item.get("Flagged") == "true"]
     elif modified_filter == "true":
-        data = [item for item in data if item.get("Modified")]  # noqa
+        data = [item for item in data if item.get("Modified")]
 
     if missed_filter == "true":
         data = [item for item in data if item.get("Missed Photo") == "YES"]
@@ -464,7 +406,6 @@ def review(doc_id):
         return "Bad ID", 400
 
     qr, asset_type_mid, building = m.groups()
-    # ✅ Hard block to BF assets for this dashboard
     if asset_type_mid.upper() != "BF":
         return "Not BF asset", 404
 
@@ -473,15 +414,14 @@ def review(doc_id):
 
     data = loaded.get("structured_data", {}) or {}
     data.setdefault("Asset Group", "")
-    data.setdefault("Attribute", "BackflowDevice")  # default value for Attribute
-    data.setdefault("Application", "")              # ensure presence for edit
+    data.setdefault("Attribute", "BackflowDevice")
+    data.setdefault("Application", "")
     data.setdefault("UBC Tag", "")
     data.setdefault("Approved", "")
     data.setdefault("Diameter", "")
     data.setdefault("Year", "")
     data.setdefault("Technical Safety BC", "")
 
-    # Derived Description (compute only if blank to preserve manual values)
     if not (data.get("Description") or "").strip():
         data["Description"] = _compute_description(
             data.get("Asset Group"),
@@ -489,16 +429,11 @@ def review(doc_id):
             data.get("Application", "")
         )
 
-    # Build image map (no -3)
     images = {}
     for tag in SEQ_SHOW:
         filename = find_image(qr, building, "BF", tag)
-        if filename:
-            images[tag] = {"exists": True, "url": url_for('serve_image', filename=filename)}
-        else:
-            images[tag] = {"exists": False, "url": None}
+        images[tag] = {"exists": bool(filename), "url": url_for('serve_image', filename=filename) if filename else None}
 
-    # Dropdown options from DB
     asset_group_options = get_asset_group_options()
     attribute_options   = get_attribute_options()
     application_options = get_application_options()
@@ -541,7 +476,7 @@ def save_review(doc_id):
     structured.setdefault("Diameter", "")
     structured.setdefault("Year", "")
     structured.setdefault("Technical Safety BC", "")
-    structured.setdefault("Description", "")  # ensure key exists
+    structured.setdefault("Description", "")
 
     # Update Flagged
     new_flagged = "true" if request.form.get("Flagged") == "on" else "false"
@@ -549,7 +484,7 @@ def save_review(doc_id):
         json_data["modified"] = True
     structured["Flagged"] = new_flagged
 
-    # Update fields from form (Description is user-editable)
+    # Update fields from form (respect user Description)
     for field in list(structured.keys()):
         if field in ("Flagged", "Approved"):
             continue
@@ -558,15 +493,15 @@ def save_review(doc_id):
             json_data["modified"] = True
         structured[field] = form_value
 
-    # Capture any brand-new fields (future-proof)
+    # Capture any brand-new fields (skip navigation/query helper fields)
     for field, form_value in request.form.items():
-        if field in ("Flagged", "action", "dashboard_query"):
+        if field in ("Flagged", "dashboard_query", "_nav", "action"):
             continue
         if field not in structured:
             structured[field] = form_value
             json_data["modified"] = True
 
-    # If Description came in blank, compute default; otherwise respect user text
+    # Compute default Description if blank
     desc_from_form = (request.form.get("Description", "") or "").strip()
     if not desc_from_form:
         auto_desc = _compute_description(
@@ -578,17 +513,17 @@ def save_review(doc_id):
             structured["Description"] = auto_desc
             json_data["modified"] = True
 
-    # Persist JSON changes
+    # Persist JSON
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(json_data, f, ensure_ascii=False, indent=4)
 
-    # 🔄 Sync to sdi_dataset on every save
+    # Sync to sdi_dataset
     try:
         upsert_sdi_dataset(doc_id, structured)
     except Exception as e:
         print(f"⚠️ sdi_dataset sync failed on save for {doc_id}: {e}")
 
-    # Next/Prev navigation stays within review context (BF-only order)
+    # Next/Prev navigation within BF-only list
     all_files = sorted(
         f for f in os.listdir(JSON_DIR)
         if f.endswith(".json")
@@ -605,26 +540,26 @@ def save_review(doc_id):
             return redirect(url_for("index") + dash_q)
         return redirect(url_for("index"))
 
-    action = request.form.get("action")
-    if action == "save_next" and current_index + 1 < len(all_files):
+    # -------- Navigation decision (reads _nav from submit button) --------
+    nav = request.form.get("_nav") or request.form.get("action") or "save"
+    if nav == "save_next" and current_index + 1 < len(all_files):
         next_doc = all_files[current_index + 1][:-5]
         return redirect(url_for("review", doc_id=next_doc))
-    elif action == "save_prev" and current_index > 0:
+    elif nav == "save_prev" and current_index > 0:
         prev_doc = all_files[current_index - 1][:-5]
         return redirect(url_for("review", doc_id=prev_doc))
 
     dash_q = request.form.get("dashboard_query", "")
     if (dash_q or "").startswith("?"):
         return redirect(url_for("index") + dash_q)
-
     return redirect(url_for("index"))
 
 
 @app.route("/toggle_approved/<doc_id>", methods=["POST"])
 def toggle_approved(doc_id):
     """
-    Toggle Approved between '' (False) and 'True' (True), persist to file,
-    upsert DB QR_codes.Approved ('1' when True), and sync sdi_dataset.
+    Toggle Approved between '' (False) and 'True' (True),
+    persist to file, upsert QR_codes, and sync sdi_dataset.
     """
     json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
     if not os.path.exists(json_path):
@@ -646,14 +581,12 @@ def toggle_approved(doc_id):
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_data, f, ensure_ascii=False, indent=4)
 
-        # Upsert to QR_codes (Approved '1' if True, else '')
         parsed = parse_doc_id(doc_id)
         if parsed:
             qr, asset_type_mid, _building = parsed
             if asset_type_mid.upper() == "BF":
                 upsert_approved_in_db(qr, structured["Approved"] == "True")
 
-        # 🔄 Also sync sdi_dataset (Approved '1' or '0' + other fields kept)
         try:
             upsert_sdi_dataset(doc_id, structured)
         except Exception as e:

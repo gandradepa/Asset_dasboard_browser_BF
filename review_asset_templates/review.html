@@ -64,8 +64,6 @@
     <input type="hidden" name="Approved" value="{{ data.get('Approved','') }}">
     <!-- hidden: keep Technical Safety BC without showing it -->
     <input type="hidden" name="Technical Safety BC" value="{{ data.get('Technical Safety BC','') }}">
-    <!-- hidden: action = save / save_next / save_prev -->
-    <input type="hidden" name="action" id="actionField" value="save">
     <!-- hidden: dashboard querystring to return with filters -->
     <input type="hidden" name="dashboard_query" id="dashboardQuery" value="">
 
@@ -89,7 +87,7 @@
           <button type="button" class="btn btn-outline-secondary btn-sm" id="rotate">Rotate</button>
           <div class="ms-auto d-flex gap-2">
             <a class="btn btn-light btn-sm" id="backToDash" href="{{ url_for('index') }}">Back</a>
-            <button type="button" class="btn btn-outline-primary btn-sm" id="skipBtn">Skip</button>
+            <button type="submit" class="btn btn-outline-primary btn-sm" name="_nav" value="save_next">Skip</button>
           </div>
         </div>
 
@@ -205,9 +203,9 @@
             <hr class="my-4">
 
             <div class="d-flex gap-2">
-              <button type="submit" class="btn btn-primary" id="saveBtn">Save</button>
-              <button type="button" class="btn btn-outline-secondary" id="savePrevBtn">Save &amp; Prev</button>
-              <button type="button" className="btn btn-outline-secondary" id="saveNextBtn">Save &amp; Next</button>
+              <button type="submit" class="btn btn-primary"           name="_nav" value="save">Save</button>
+              <button type="submit" class="btn btn-outline-secondary" name="_nav" value="save_prev">Save &amp; Prev</button>
+              <button type="submit" class="btn btn-outline-secondary" name="_nav" value="save_next">Save &amp; Next</button>
               <a class="btn btn-light ms-auto" id="backBtn" href="{{ url_for('index') }}">Back to Dashboard</a>
             </div>
 
@@ -224,7 +222,7 @@
       try {
         var q = localStorage.getItem('dashboardQuery') || '';
         document.getElementById('dashboardQuery').value = q.startsWith('?') ? q : '';
-        if (q) {
+        if (q && q.startsWith('?')) {
           var backLink = document.getElementById('backToDash');
           if (backLink) backLink.href = backLink.href + q;
           var backBtn = document.getElementById('backBtn');
@@ -262,7 +260,7 @@
     document.getElementById('zoomOut')?.addEventListener('click', function(){ scale = Math.max(0.2, scale - 0.1); applyTransform(); });
     document.getElementById('rotate')?.addEventListener('click', function(){ rotation = (rotation + 90) % 360; applyTransform(); });
 
-    // === Auto Description (BF) live, but respects manual edits ===
+    // Auto Description (BF) live, respecting manual edits
     function computeBFDescription(appVal, assetGroupVal) {
       var prefix = "BFP-";
       var suffix = "BFP";
