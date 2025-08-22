@@ -16,7 +16,7 @@ JSON_DIR = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New A
 IMG_DIR  = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\Capture_photos_upload"
 
 # --- SQLite DB (for dropdown options & syncs) ---
-DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\asset_capture_app\data\QR_codes.db"
+DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\asset_capture_app_dev\data\QR_codes.db"
 
 # Tables/columns
 ASSET_GROUP_TABLE = "Asset_Group"
