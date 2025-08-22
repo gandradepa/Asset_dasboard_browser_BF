@@ -62,6 +62,8 @@
   <form method="POST" action="{{ url_for('save_review', doc_id=doc_id) }}" id="reviewForm">
     <!-- hidden: keep Approved without showing it -->
     <input type="hidden" name="Approved" value="{{ data.get('Approved','') }}">
+    <!-- hidden: keep Technical Safety BC without showing it -->
+    <input type="hidden" name="Technical Safety BC" value="{{ data.get('Technical Safety BC','') }}">
     <!-- hidden: action = save / save_next / save_prev -->
     <input type="hidden" name="action" id="actionField" value="save">
     <!-- hidden: dashboard querystring to return with filters -->
@@ -177,15 +179,19 @@
                 </select>
               </div>
 
-              <!-- Description (auto) now EDITABLE -->
+              <!-- Description (auto) EDITABLE -->
               <div class="col-md-12">
                 <label class="form-label">Description (auto)</label>
                 <input type="text" class="form-control" name="Description" id="descField" value="{{ data.get('Description','') }}">
                 <div class="form-text fw-bold">Generated Automatically</div>
               </div>
 
-              <!-- Any extra keys not already shown (excluding Approved, Flagged, etc.) -->
-              {% set excluded = ['Manufacturer','Model','Serial Number','Diameter','UBC Tag','Application','Asset Group','Attribute','Description','Approved','Flagged'] %}
+              <!-- Any extra keys not already shown (excluding hidden ones) -->
+              {% set excluded = [
+                 'Manufacturer','Model','Serial Number','Diameter','UBC Tag',
+                 'Application','Asset Group','Attribute','Description',
+                 'Approved','Flagged','Technical Safety BC'
+              ] %}
               {% for key, value in data.items() %}
                 {% if key not in excluded %}
                   <div class="col-md-12">
@@ -201,7 +207,7 @@
             <div class="d-flex gap-2">
               <button type="submit" class="btn btn-primary" id="saveBtn">Save</button>
               <button type="button" class="btn btn-outline-secondary" id="savePrevBtn">Save &amp; Prev</button>
-              <button type="button" class="btn btn-outline-secondary" id="saveNextBtn">Save &amp; Next</button>
+              <button type="button" className="btn btn-outline-secondary" id="saveNextBtn">Save &amp; Next</button>
               <a class="btn btn-light ms-auto" id="backBtn" href="{{ url_for('index') }}">Back to Dashboard</a>
             </div>
 
@@ -256,24 +262,7 @@
     document.getElementById('zoomOut')?.addEventListener('click', function(){ scale = Math.max(0.2, scale - 0.1); applyTransform(); });
     document.getElementById('rotate')?.addEventListener('click', function(){ rotation = (rotation + 90) % 360; applyTransform(); });
 
-    // Buttons
-    document.getElementById('savePrevBtn')?.addEventListener('click', function(){
-      document.getElementById('actionField').value = 'save_prev';
-      document.getElementById('reviewForm').submit();
-    });
-    document.getElementById('saveNextBtn')?.addEventListener('click', function(){
-      document.getElementById('actionField').value = 'save_next';
-      document.getElementById('reviewForm').submit();
-    });
-    document.getElementById('skipBtn')?.addEventListener('click', function(){
-      document.getElementById('actionField').value = 'save_next';
-      document.getElementById('reviewForm').submit();
-    });
-    document.getElementById('saveBtn')?.addEventListener('click', function(){
-      document.getElementById('actionField').value = 'save';
-    });
-
-    // Auto Description (BF): compute but DON'T override manual edits
+    // === Auto Description (BF) live, but respects manual edits ===
     function computeBFDescription(appVal, assetGroupVal) {
       var prefix = "BFP-";
       var suffix = "BFP";
@@ -285,31 +274,56 @@
       }
       return (prefix + appPart + firstWord + suffix).trim();
     }
-    (function(){
+
+    (function () {
       var desc   = document.getElementById('descField');
       var appSel = document.getElementById('applicationSelect');
       var agSel  = document.getElementById('assetGroupSelect');
-      var descEdited = false;
+      if (!desc) return;
+
+      function currentComputed() {
+        return computeBFDescription(appSel ? appSel.value : '', agSel ? agSel.value : '');
+      }
+
+      function setAuto(flag) { desc.dataset.auto = flag ? "1" : "0"; }
+      function isAuto()      { return desc.dataset.auto === "1"; }
+
+      // Initialize: treat empty, "BFP-BFP" or equal to computed as AUTO
+      var initialVal  = (desc.value || '').trim();
+      var autoNowInit = currentComputed();
+      if (!initialVal || initialVal === "BFP-BFP" || initialVal === autoNowInit) {
+        setAuto(true);
+        desc.value = autoNowInit;
+      } else {
+        setAuto(false);
+      }
 
       function refreshDesc() {
-        if (!desc) return;
-        if (descEdited) return; // respect manual edits
-        var computed = computeBFDescription(appSel ? appSel.value : '', agSel ? agSel.value : '');
-        // fill only if empty OR previously auto-generated
-        if (!desc.value.trim()) {
+        var computed = currentComputed();
+        var v = (desc.value || '').trim();
+
+        if (isAuto() || v === "BFP-BFP") {
           desc.value = computed;
+          setAuto(true);
+        }
+        if (!isAuto() && v === computed) {
+          setAuto(true);
         }
       }
 
-      // initial fill if empty; otherwise keep existing
-      refreshDesc();
+      appSel && appSel.addEventListener('change', refreshDesc);
+      agSel  && agSel.addEventListener('change', refreshDesc);
 
-      // detect manual edits
-      desc?.addEventListener('input', function(){ descEdited = true; });
-
-      // recompute on selectors change, but don't override if manually edited
-      appSel?.addEventListener('change', refreshDesc);
-      agSel?.addEventListener('change', refreshDesc);
+      desc.addEventListener('input', function () {
+        var v = (desc.value || '').trim();
+        var autoNow = currentComputed();
+        if (!v || v === autoNow || v === "BFP-BFP") {
+          setAuto(true);
+          desc.value = autoNow;
+        } else {
+          setAuto(false);
+        }
+      });
     })();
   </script>
 </body>
