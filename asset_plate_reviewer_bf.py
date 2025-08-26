@@ -3,20 +3,32 @@ import json
 import re
 import sqlite3
 from functools import lru_cache
+from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, jsonify
+
+# --- Resolve paths relative to this repository for templates/static ---
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATE_DIR = BASE_DIR / "review_asset_templates"
+
+# Prefer "review_asset_templates/static"; fall back to repo-level "static"; else disable Flask static
+CANDIDATE_STATIC = [
+    TEMPLATE_DIR / "static",
+    BASE_DIR / "static",
+]
+STATIC_DIR = next((p for p in CANDIDATE_STATIC if p.exists()), None)
 
 app = Flask(
     __name__,
-    template_folder=r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\Asset_plate_review_BF\review_asset_templates",
-    static_folder=r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\Asset_plate_review_BF\review_asset_templates\static"
+    template_folder=str(TEMPLATE_DIR),
+    static_folder=str(STATIC_DIR) if STATIC_DIR else None,  # None if served by Nginx
 )
 
 # --- Paths ---
-JSON_DIR = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\API\Output_jason_api"
-IMG_DIR  = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\QR_code_project\Capture_photos_upload"
+JSON_DIR = r"/home/developer/Output_jason_api"  # Linux path for Docker deployment
+IMG_DIR  = r"/home/developer/Capture_photos_upload" # Linux path for Docker deployment
 
 # --- SQLite DB (for dropdown options & syncs) ---
-DB_PATH = r"S:\MaintOpsPlan\AssetMgt\Asset Management Process\Database\8. New Assets\Git_control\asset_capture_app_dev\data\QR_codes.db"
+DB_PATH = r"/home/developer/asset_capture_app_dev/data/QR_codes.db"
 
 # Tables/columns
 ASSET_GROUP_TABLE = "Asset_Group"
