@@ -116,8 +116,9 @@
                 {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
                 <td class="approved-cell"
                     data-docid="{{ item.doc_id }}"
-                    data-search="{{ approved_bool }}">
-                    {% if item['Approved'] == 'True' %}✅{% else %}{% endif %}
+                    data-search="{{ approved_bool }}"
+                    title="Click to toggle Approved">
+                    {% if item['Approved'] == 'True' %}✅{% else %}☐{% endif %}
                 </td>
 
                 <td>{% if item.Flagged == 'true' %}🚩{% else %}&mdash;{% endif %}</td>
@@ -148,7 +149,7 @@
     </table>
 
     <footer class="text-center mt-5 pt-4 border-top text-muted small">
-        © 2025 University of British Columbia - Maintenance Planning Department. All rights reserved.
+        &copy; 2025 University of British Columbia - Maintenance Planning Department. All rights reserved.
     </footer>
 
     <!-- jQuery, Bootstrap, DataTables -->
@@ -168,10 +169,7 @@
       });
 
       $(document).ready(function () {
-          // Column indexes (0-based):
-          // 0 QR, 1 Building, 2 Type (hidden), 3 Manufacturer, 4 Model, 5 Serial,
-          // 6 UBC Tag (visible), 7 Asset Group, 8 Attribute, 9 Description, 10 Diameter,
-          // 11 Approved, 12 Flagged, 13 Modified, 14 Missed, 15 Action
+          // Column indexes (0-based)
           var colQR = 0,
               colBuilding = 1,
               colType = 2,
@@ -189,23 +187,18 @@
               stateSave: true,
               stateDuration: -1,
               columnDefs: [
-                  // Hide only "Type"
-                  { targets: [colType], visible: false, searchable: false },
-
-                  // Orderable columns (UBC Tag included)
+                  { targets: [colType], visible: false, searchable: false }, // hide Type
                   { orderable: true, targets: [colQR, colBuilding, colModel, colUBCTag, colAssetGroup, colAttribute, colDescription, colDiameter] },
-
-                  // Not orderable: Approved toggle
-                  { orderable: false, targets: [colApproved] }
+                  { orderable: false, targets: [colApproved] } // Approved toggle
               ],
-              createdRow: function (row, data, dataIndex) {
+              createdRow: function (row) {
                   var $approvedCell = $('td', row).eq(colApproved);
                   var val = $approvedCell.attr('data-search');
                   if (val) { $approvedCell.attr('data-search', val); }
               }
           });
 
-          // Badge colors (Type is hidden, but harmless to keep)
+          // Badge colors
           function applyTypeBadges() {
               $('#assetTable span.type-badge').each(function () {
                   var t = ($(this).data('type') || '').toString().trim().toUpperCase();
@@ -242,7 +235,6 @@
           // Restore saved DataTables state to selects
           var state = table.state.loaded();
           if (state && state.columns) {
-              // Building select (strip ^$ anchors)
               var bSearch = state.columns[colBuilding]?.search?.search || '';
               if (bSearch.startsWith('^') && bSearch.endsWith('$')) {
                   bSearch = bSearch.slice(1, -1);
@@ -250,7 +242,6 @@
               }
               if (bSearch) $('#filter-building').val(bSearch);
 
-              // Approved select
               var aSearch = state.columns[colApproved]?.search?.search || '';
               if (aSearch === '^True$') $('#filter-approved').val('True');
               else if (aSearch === '^False$') $('#filter-approved').val('False');
@@ -285,9 +276,9 @@
                   return $(td).attr('data-search') || '';
               });
           };
-          $.fn.dataTable.ext.search.push(function (settings, data, dataIndex, rowData, counter) {
+          $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
               var col = colApproved;
-              var search = settings.aoPreSearchCols[col].sSearch; // regex if regex=true
+              var search = settings.aoPreSearchCols[col].sSearch;
               if (!search) return true;
               var td = settings.aoData[dataIndex].anCells[col];
               var val = $(td).attr('data-search') || '';
@@ -296,7 +287,7 @@
               return (val.indexOf(search) !== -1);
           });
 
-          // Click to toggle Approved (and persist to DB via server)
+          // Click to toggle Approved (✅ when true, ☐ when false)
           $('#assetTable').on('click', '.approved-cell', function() {
               var cell = $(this);
               var docId = cell.data('docid');
@@ -307,7 +298,7 @@
                           cell.html('✅');
                           cell.attr('data-search', 'True');
                       } else {
-                          cell.html('');
+                          cell.html('☐');
                           cell.attr('data-search', 'False');
                       }
                       table.draw(false);
