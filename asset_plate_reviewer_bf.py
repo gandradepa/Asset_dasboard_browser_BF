@@ -4,6 +4,7 @@ import re
 import sqlite3
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, jsonify
 
 # --- Resolve paths relative to this repository for templates/static ---
@@ -50,6 +51,150 @@ SEQ_SHOW  = ['-0', '-1', '-2']
 
 # JSON filename pattern: "<QR>_<TYPE>_<Building>.json"
 JSON_NAME_RE = re.compile(r"^(\d+)_([A-Za-z]+)_(\d+(?:-\d+)?)\.json$")
+
+
+# --- START: Directory Sync Logic ---
+
+# --- Image Sync ---
+DATA_DIR = Path(DB_PATH).parent
+PROCESSED_LOG_BF = DATA_DIR / "processed_images_bf.log"
+IMG_NAME_RE_BF = re.compile(r"^(\d+)\s+(.+?)\s+BF\s+-\s+[0-3]\.(?:jpe?g|png)$", re.IGNORECASE)
+image_sync_lock = Lock()
+
+# --- JSON Sync ---
+PROCESSED_JSON_LOG_BF = DATA_DIR / "processed_json_bf.log"
+json_sync_lock = Lock()
+
+
+def _is_bf_filename(filename: str) -> bool:
+    """True if the JSON is for a BF asset type."""
+    if not filename.endswith(".json"): return False
+    m = JSON_NAME_RE.match(filename)
+    if not m:
+        return False
+    _qr, asset_type_mid, _building = m.groups()
+    return asset_type_mid.upper() == "BF"
+
+
+def sync_image_directory_to_db_bf():
+    """
+    Scans IMG_DIR for new BF image files and upserts placeholder entries into sdi_dataset.
+    """
+    if not image_sync_lock.acquire(blocking=False):
+        return
+
+    try:
+        if not os.path.isdir(IMG_DIR):
+            return
+
+        processed_files = set()
+        if PROCESSED_LOG_BF.exists():
+            with open(PROCESSED_LOG_BF, 'r', encoding='utf-8') as f:
+                processed_files = {line.strip() for line in f if line.strip()}
+
+        current_files = {f for f in os.listdir(IMG_DIR) if f.lower().endswith(tuple(VALID_IMAGE_EXTS))}
+        new_files = sorted(list(current_files - processed_files))
+
+        if not new_files:
+            return
+
+        print(f"SYNC-IMG (BF): Found {len(new_files)} new image(s).")
+        successfully_processed = []
+        for filename in new_files:
+            match = IMG_NAME_RE_BF.match(filename)
+            if not match:
+                # Log non-matching files so they are not re-checked
+                if " BF " in filename:
+                    successfully_processed.append(filename)
+                continue
+
+            qr, building = match.groups()
+            try:
+                # Construct the doc_id that the existing upsert function expects
+                doc_id = f"{qr.strip()}_BF_{building.strip()}"
+                # Call the existing upsert function with an empty dict to create a placeholder
+                upsert_sdi_dataset(doc_id=doc_id, structured={})
+                successfully_processed.append(filename)
+            except Exception as e:
+                print(f"SYNC-IMG-ERROR (BF): DB upsert failed for {filename}: {e}")
+
+        if successfully_processed:
+            with open(PROCESSED_LOG_BF, 'a', encoding='utf-8') as f:
+                for filename in successfully_processed:
+                    f.write(f"{filename}\n")
+    finally:
+        image_sync_lock.release()
+
+
+def sync_json_directory_to_db_bf():
+    """
+    Scans JSON_DIR for new or modified BF JSON files and upserts their structured data.
+    """
+    if not json_sync_lock.acquire(blocking=False):
+        return
+
+    try:
+        if not os.path.isdir(JSON_DIR):
+            return
+
+        processed_files = {}
+        if PROCESSED_JSON_LOG_BF.exists():
+            with open(PROCESSED_JSON_LOG_BF, 'r', encoding='utf-8') as f:
+                try:
+                    processed_files = json.load(f)
+                except json.JSONDecodeError:
+                    print("SYNC-JSON-WARN (BF): Could not read log, starting fresh.")
+
+        files_to_process = {}
+        for filename in os.listdir(JSON_DIR):
+            if not _is_bf_filename(filename):
+                continue
+            
+            filepath = os.path.join(JSON_DIR, filename)
+            current_mtime = os.path.getmtime(filepath)
+            
+            if filename not in processed_files or current_mtime > processed_files[filename]:
+                files_to_process[filename] = current_mtime
+
+        if not files_to_process:
+            return
+
+        print(f"SYNC-JSON (BF): Found {len(files_to_process)} new/updated JSON file(s).")
+        for filename, mtime in files_to_process.items():
+            doc_id = filename[:-5]
+            try:
+                with open(os.path.join(JSON_DIR, filename), 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                
+                structured_data = content.get("structured_data", {})
+                if isinstance(structured_data, dict):
+                    print(f"   -> Syncing data from {filename}")
+                    upsert_sdi_dataset(doc_id=doc_id, structured=structured_data)
+                    processed_files[filename] = mtime
+                else:
+                    processed_files[filename] = mtime
+
+            except Exception as e:
+                print(f"SYNC-JSON-ERROR (BF): Failed to process {filename}: {e}")
+        
+        with open(PROCESSED_JSON_LOG_BF, 'w', encoding='utf-8') as f:
+            json.dump(processed_files, f, indent=2)
+
+    finally:
+        json_sync_lock.release()
+
+
+@app.before_request
+def before_request_handler():
+    """
+    Runs sync logic before each request for BF assets.
+    """
+    if request.endpoint in ('static', 'serve_image'):
+        return
+    sync_image_directory_to_db_bf()
+    sync_json_directory_to_db_bf()
+
+# --- END: Directory Sync Logic ---
 
 
 def find_image(qr: str, building: str, asset_type_mid: str, seq_tag: str):
@@ -270,13 +415,21 @@ def upsert_sdi_dataset(doc_id: str, structured: dict):
             filtered = {k: v for k, v in payload.items() if k in cols}
             set_cols = [c for c in filtered.keys() if c != "QR Code"]
             if not set_cols:
-                print('ℹ️ Nothing to update for sdi_dataset (only key present).')
-                return
+                # If only the key is present, we may still need to INSERT it
+                pass
 
-            set_clause = ", ".join([f'"{c}"=?' for c in set_cols])
-            update_sql = f'UPDATE "sdi_dataset" SET {set_clause} WHERE "QR Code"=?'
-            update_vals = [filtered[c] for c in set_cols] + [filtered["QR Code"]]
-            cur.execute(update_sql, update_vals)
+            # Use composite key for upsert if "Building" column exists
+            key_cols = ["QR Code"]
+            if "Building" in cols:
+                key_cols.append("Building")
+
+            where_clause = " AND ".join(f'"{k}"=?' for k in key_cols)
+            update_sql = f'UPDATE "sdi_dataset" SET {", ".join([f""""{c}"=? """ for c in set_cols])} WHERE {where_clause}'
+            update_vals = [filtered[c] for c in set_cols] + [filtered[k] for k in key_cols]
+            
+            # Only run update if there are columns to set
+            if set_cols:
+                cur.execute(update_sql, update_vals)
 
             if cur.rowcount == 0:
                 insert_cols = list(filtered.keys())
@@ -296,16 +449,14 @@ def load_json_items():
         if not filename.endswith(".json") or filename.endswith("_raw_ocr.json"):
             continue
 
+        if not _is_bf_filename(filename):
+            continue
+        
         m = JSON_NAME_RE.match(filename)
         if not m:
             continue
 
         qr, asset_type_mid, building = m.groups()
-
-        # Only BF assets
-        if asset_type_mid.upper() != "BF":
-            continue
-
         doc_id = filename[:-5]
 
         try:
