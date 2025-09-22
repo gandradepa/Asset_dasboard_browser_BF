@@ -25,7 +25,8 @@
 
         .filters-bar .form-select { min-width: 220px; }
         .filters-bar .badge { font-weight: 500; }
-        td.approved-cell { cursor: pointer; }
+        td.approved-cell { cursor: pointer; user-select: none; }
+        td.approved-cell:focus { outline: 2px solid #0d6efd33; }
 
         @media (max-width: 767.98px) {
           .dataTables_length,
@@ -90,7 +91,23 @@
     <table id="assetTable" class="table table-striped table-bordered dt-responsive nowrap" style="width:100%">
         <thead class="table-dark">
             <tr>
-                <th class="text-center">QR Code</th>           <th class="text-center">Building</th>           <th class="text-center">Type</th>               <th class="text-start">Manufacturer</th>        <th class="text-start">Model</th>               <th class="text-start">Serial</th>              <th class="text-start">UBC Tag</th>             <th class="text-start">Asset Group</th>         <th class="text-start">Attribute</th>           <th class="text-start">Description</th>         <th class="text-start">Diameter</th>            <th class="text-center">Approved</th>           <th class="text-center">Flagged</th>            <th class="text-center">Modified</th>           <th class="text-center">Missed Photo</th>       <th class="text-center" data-priority="1">Action</th>             </tr>
+                <th class="text-center">QR Code</th>
+                <th class="text-center">Building</th>
+                <th class="text-center">Type</th>
+                <th class="text-start">Manufacturer</th>
+                <th class="text-start">Model</th>
+                <th class="text-start">Serial</th>
+                <th class="text-start">UBC Tag</th>
+                <th class="text-start">Asset Group</th>
+                <th class="text-start">Attribute</th>
+                <th class="text-start">Description</th>
+                <th class="text-start">Diameter</th>
+                <th class="text-center">Approved</th>
+                <th class="text-center">Flagged</th>
+                <th class="text-center">Modified</th>
+                <th class="text-center">Missed Photo</th>
+                <th class="text-center" data-priority="1">Action</th>
+             </tr>
         </thead>
         <tbody>
         {% for item in data %}
@@ -113,7 +130,7 @@
                 <td class="text-start">{{ item['Diameter'] }}</td>
 
                 {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
-                <td class="approved-cell text-center"
+                <td class="approved-cell text-center" tabindex="0" role="button"
                     data-docid="{{ item.doc_id }}"
                     data-search="{{ approved_bool }}"
                     title="Click to toggle Approved">
@@ -140,7 +157,7 @@
                   {% endif %}
                 </td>
                 <td>
-                    <a class="btn btn-primary btn-sm" href="{{ url_for('review', doc_id=item.doc_id) }}">Review</a>
+                    <a class="btn btn-primary btn-sm {% if item['Approved'] == 'True' %}disabled{% endif %}" href="{{ url_for('review', doc_id=item.doc_id) }}">Review</a>
                 </td>
             </tr>
         {% endfor %}
@@ -150,6 +167,23 @@
     <footer class="text-center mt-5 pt-4 border-top text-muted small">
         &copy; 2025 University of British Columbia - Maintenance Planning Department. All rights reserved.
     </footer>
+
+    <div class="modal fade" id="infoModal" tabindex="-1" aria-labelledby="infoModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="infoModalLabel">Notification</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="infoModalBody">
+                    <!-- Dynamic message goes here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -169,17 +203,9 @@
       });
 
       $(document).ready(function () {
-          // Column indexes (0-based)
-          var colQR = 0,
-              colBuilding = 1,
-              colType = 2,
-              colModel = 4,
-              colUBCTag = 6,
-              colAssetGroup = 7,
-              colAttribute = 8,
-              colDescription = 9,
-              colDiameter = 10,
-              colApproved = 11;
+          var colBuilding = 1;
+          var colApproved = 11;
+          var colAction = 15;
 
           var table = $('#assetTable').DataTable({
               pageLength: 15,
@@ -188,37 +214,10 @@
               stateDuration: -1,
               responsive: true,
               columnDefs: [
-                  { targets: [colType], visible: false, searchable: true },
-                  { orderable: true, targets: [colQR, colBuilding, colModel, colUBCTag, colAssetGroup, colAttribute, colDescription, colDiameter] },
-                  { orderable: false, targets: [colApproved, 15] } // Approved toggle and Action
-              ],
-              createdRow: function (row) {
-                  var $approvedCell = $('td', row).eq(colApproved);
-                  var val = $approvedCell.attr('data-search');
-                  if (val) { $approvedCell.attr('data-search', val); }
-              }
+                  { orderable: false, targets: [colApproved, colAction] }
+              ]
           });
 
-          // Badge colors
-          function applyTypeBadges() {
-              $('#assetTable span.type-badge').each(function () {
-                  var t = ($(this).data('type') || '').toString().trim().toUpperCase();
-                  $(this).removeClass(function (idx, cn) {
-                      return (cn.match(/(^|\s)type-\S+/g) || []).join(' ');
-                  });
-                  var cls = 'type-OTHER';
-                  if (t === 'ME') cls = 'type-ME';
-                  else if (t === 'EE') cls = 'type-EE';
-                  else if (t === 'EL') cls = 'type-EL';
-                  else if (t === 'PL') cls = 'type-PL';
-                  else if (t === 'HV') cls = 'type-HV';
-                  $(this).addClass(cls);
-              });
-          }
-          applyTypeBadges();
-          table.on('draw', applyTypeBadges);
-
-          // Populate Building filter from table data
           function populateBuilding() {
               var select = $('#filter-building');
               select.find('option:not(:first)').remove();
@@ -233,7 +232,6 @@
           }
           populateBuilding();
 
-          // Restore saved DataTables state to selects
           var state = table.state.loaded();
           if (state && state.columns) {
               var bSearch = state.columns[colBuilding]?.search?.search || '';
@@ -249,69 +247,91 @@
           }
 
           table.on('draw', function () {
+              var current = $('#filter-building').val();
               populateBuilding();
-              if ($('#filter-building').val()) $('#filter-building').val($('#filter-building').val());
+              if (current) $('#filter-building').val(current);
           });
 
-          // Building filter
           $('#filter-building').on('change', function () {
               var val = $(this).val();
               table.column(colBuilding).search(val ? '^' + $.fn.dataTable.util.escapeRegex(val) + '$' : '', true, false).draw();
           });
 
-          // Approved filter
           $('#filter-approved').on('change', function () {
               var v = $(this).val();
-              if (v === 'True') {
-                  table.column(colApproved).search('^True$', true, false).draw();
-              } else if (v === 'False') {
-                  table.column(colApproved).search('^False$', true, false).draw();
+              table.column(colApproved).search(v ? `^${v}$` : '', true, false).draw();
+          });
+
+          $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+              if (settings.nTable !== $('#assetTable')[0]) return true;
+              var search = settings.aoPreSearchCols[colApproved].sSearch;
+              if (!search) return true;
+              var td = settings.aoData[dataIndex].anCells[colApproved];
+              var val = $(td).attr('data-search') || '';
+              var regex = settings.aoPreSearchCols[colApproved].bRegex ? new RegExp(search) : null;
+              return regex ? regex.test(val) : (val.indexOf(search) !== -1);
+          });
+
+          var infoModal = new bootstrap.Modal(document.getElementById('infoModal'));
+          var infoModalTitle = document.getElementById('infoModalLabel');
+          var infoModalBody = document.getElementById('infoModalBody');
+
+          function showModal(title, message) {
+              infoModalTitle.textContent = title;
+              infoModalBody.textContent = message;
+              infoModal.show();
+          }
+
+          $('#assetTable').on('click keypress', '.approved-cell', function (e) {
+              if (e.type === 'keypress' && (e.key !== ' ' && e.key !== 'Enter')) return;
+              e.preventDefault();
+
+              var cell = $(this);
+              var tr = cell.closest('tr');
+              var docId = cell.data('docid');
+              var qrCode = tr.find('td:first').text().trim();
+              var reviewButton = tr.find('a.btn-primary');
+              var isCurrentlyApproved = cell.attr('data-search') === 'True';
+
+              if (isCurrentlyApproved) {
+                  $.get('/check_sdi/' + qrCode, function(response) {
+                      if (response.exists) {
+                          showModal('Action Not Allowed', 'The asset was exported to Planon, so you cannot proceed it again.');
+                      } else {
+                          toggleApprovedStatus(docId, cell, reviewButton);
+                      }
+                  }).fail(function() {
+                      showModal('Server Error', "Could not check the asset's export status.");
+                  });
               } else {
-                  table.column(colApproved).search('', false, false).draw();
+                  toggleApprovedStatus(docId, cell, reviewButton);
               }
           });
 
-          // Use data-search for Approved column filtering
-          $.fn.dataTable.ext.order['dom-data-search'] = function (settings, col) {
-              return this.api().column(col, { order: 'index' }).nodes().map(function (td) {
-                  return $(td).attr('data-search') || '';
-              });
-          };
-          $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
-              var col = colApproved;
-              var search = settings.aoPreSearchCols[col].sSearch;
-              if (!search) return true;
-              var td = settings.aoData[dataIndex].anCells[col];
-              var val = $(td).attr('data-search') || '';
-              var regex = settings.aoPreSearchCols[col].bRegex ? new RegExp(search) : null;
-              if (regex) return regex.test(val);
-              return (val.indexOf(search) !== -1);
-          });
-
-          // Click to toggle Approved (✅ when true, ☐ when false)
-          $('#assetTable').on('click', '.approved-cell', function() {
-              var cell = $(this);
-              var docId = cell.data('docid');
-
-              $.post('/toggle_approved/' + docId, function(resp) {
+          function toggleApprovedStatus(docId, cell, reviewButton) {
+              $.post('/toggle_approved/' + docId, function (resp) {
                   if (resp.success) {
+                      var tr = cell.closest('tr');
                       if (resp.new_value === "True") {
                           cell.html('✅');
                           cell.attr('data-search', 'True');
+                          reviewButton.addClass('disabled');
                       } else {
                           cell.html('☐');
                           cell.attr('data-search', 'False');
+                          reviewButton.removeClass('disabled');
                       }
-                      table.draw(false);
+                      table.row(tr).invalidate().draw(false);
                   } else {
-                      alert("Error: " + resp.error);
+                      showModal('Update Failed', resp.error || "An unknown error occurred.");
                   }
               }).fail(function() {
-                  alert("Failed to update Approved status.");
+                  showModal('Server Error', 'Failed to communicate with the server to update the approved status.');
               });
-          });
+          }
       });
     </script>
 
 </body>
 </html>
+

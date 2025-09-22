@@ -189,7 +189,7 @@ def before_request_handler():
     """
     Runs sync logic before each request for BF assets.
     """
-    if request.endpoint in ('static', 'serve_image'):
+    if request.endpoint in ('static', 'serve_image', 'check_sdi'):
         return
     sync_image_directory_to_db_bf()
     sync_json_directory_to_db_bf()
@@ -257,7 +257,7 @@ def _text_columns(conn, table_name: str):
         t = (coltype or "").upper()
         if any(hint in t for hint in TEXT_TYPE_HINTS) or t == "":
             text_cols.append(name)
-    return text_cols or all_cols
+        return text_cols or all_cols
 
 
 def _fetch_distinct_nonempty(conn, table: str, col: str):
@@ -758,6 +758,41 @@ def toggle_approved(doc_id):
         return jsonify({"success": True, "new_value": structured["Approved"]})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _quote(name: str) -> str:
+    """Helper for safe SQL table/column name quoting."""
+    return f'"{name}"'.replace('""', '"')
+
+
+@app.route("/check_sdi/<qr_code>")
+def check_sdi(qr_code):
+    """
+    Checks if a QR code exists in the sdi_print_out table to prevent
+    un-approving an asset that has already been exported to Planon.
+    """
+    if not _connectable():
+        return jsonify({"error": "Database not accessible"}), 500
+
+    sdi_print_out_table = "sdi_print_out"
+    qr_col = "QR Code"
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            query = f"SELECT 1 FROM {_quote(sdi_print_out_table)} WHERE {_quote(qr_col)} = ? LIMIT 1"
+            cur.execute(query, (qr_code,))
+            result = cur.fetchone()
+            return jsonify({"exists": result is not None})
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e).lower():
+            return jsonify({"exists": False})
+        
+        print(f"!! DB Operational Error in /check_sdi (BF): {e}")
+        return jsonify({"error": f"Database query failed: {e}"}), 500
+    except Exception as e:
+        print(f"!! UNEXPECTED ERROR in /check_sdi (BF): {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/images/<path:filename>")
