@@ -113,16 +113,16 @@
                 <td class="text-start">{{ item['Diameter'] }}</td>
 
                 {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
-                <td class="approved-cell"
+                <td class="approved-cell text-center"
                     data-docid="{{ item.doc_id }}"
                     data-search="{{ approved_bool }}"
                     title="Click to toggle Approved">
                     {% if item['Approved'] == 'True' %}✅{% else %}☐{% endif %}
                 </td>
 
-                <td>{% if item.Flagged == 'true' %}🚩{% else %}&mdash;{% endif %}</td>
-                <td>{% if item.Modified %}✏️{% else %}&mdash;{% endif %}</td>
-                <td>
+                <td class="text-center">{% if item.Flagged == 'true' %}🚩{% else %}&mdash;{% endif %}</td>
+                <td class="text-center">{% if item.Modified %}✏️{% else %}&mdash;{% endif %}</td>
+                <td class="text-center">
                   {% if item['Missed Photo'] == 'YES' %}
                     <span class="text-danger"
                           data-bs-toggle="tooltip"
